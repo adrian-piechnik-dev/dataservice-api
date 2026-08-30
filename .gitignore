@@ -1,0 +1,23 @@
+# Secrets - the real .env never reaches the repo (this template gets cloned).
+# The variable template lives in .env.example.
+.env
+
+# Local database - a runtime artifact, not code.
+*.db
+*.sqlite3
+
+# Virtual environment
+.venv/
+
+# Python artifacts
+__pycache__/
+*.egg-info/
+
+# pytest cache
+.pytest_cache/
+
+# Working notes and experiments inside a clone - kept out of the repo (D9).
+_scratch/
+
+# IDE settings (PyCharm/IntelliJ) - the developer's environment, not the project.
+.idea/

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Plain values, not secrets: the database is a throwaway SQLite file on the
+    # runner and the key serves the tests alone. Settings requires both fields
+    # (fail-fast), so without them neither alembic nor pytest would start.
+    env:
+      DATABASE_URL: sqlite+aiosqlite:///./ci.db
+      API_KEY: ci-test-key
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: pytest -q
+
+  build:
+    runs-on: ubuntu-latest
+
+    # The image is built only once the tests are green - there is no point
+    # packing code that does not pass pytest.
+    needs: test
+
+    # No DATABASE_URL/API_KEY: `docker build` only runs `pip install .` in the
+    # builder stage and never starts the application, so the fail-fast Settings
+    # never comes into play. Those variables would matter at `docker run`.
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v3
+
+      # push/load false: all we want is proof that the image assembles.
+      # It is published nowhere and never loaded into a local daemon.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: false
+          tags: tpl-fastapi:ci
