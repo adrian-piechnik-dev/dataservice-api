@@ -1,0 +1,16 @@
+﻿services:
+  - type: web
+    name: dataservice-api
+    runtime: python
+    region: frankfurt
+    plan: free
+    branch: main
+    buildCommand: pip install .
+    startCommand: uvicorn ap_dataservice.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.1"
+      - key: DATABASE_URL
+        sync: false
+      - key: API_KEY
+        sync: false
