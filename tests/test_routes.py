@@ -1,4 +1,4 @@
-"""Tests of the HTTP layer of the Record resource.
+"""Tests of the HTTP layer of the Story resource.
 
 The router is exercised through a real ASGI stack, so every test checks what
 the client sees: the status code, the body and the headers. The application is
@@ -31,6 +31,10 @@ VALID_API_KEY = "sekret-testowy-123"
 TEST_DEFAULT_PAGE_SIZE = 2
 TEST_MAX_PAGE_SIZE = 5
 
+# The scraper timestamps, in the shape they travel over JSON.
+POSTED_AT = "2026-08-29T06:12:00Z"
+SCRAPED_AT = "2026-08-29T08:00:00Z"
+
 
 def _test_settings() -> Settings:
     """Test settings: a known API key and small pagination limits."""
@@ -45,7 +49,7 @@ def _test_settings() -> Settings:
 
 @pytest.fixture
 def app(session: AsyncSession) -> FastAPI:
-    """An application with just the records router, wired to the test database."""
+    """An application with just the stories router, wired to the test database."""
     application = FastAPI()
     application.include_router(router)
     # The session is handed back directly, without a generator: closing it is
@@ -80,67 +84,131 @@ async def anonymous_client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
 
 
 async def _create(client: AsyncClient, **fields: Any) -> dict[str, Any]:
-    """Creates a record through the API and returns it as the response shows it."""
-    payload = {"external_id": "ext-1", "name": "Nazwa", "category": "A", "value": 1.0}
+    """Creates a story through the API and returns it as the response shows it."""
+    payload: dict[str, Any] = {
+        "hn_id": 38101234,
+        "title": "Show HN: A self-hosted Postgres backup tool",
+        "url": "https://github.com/example/pgbackup",
+        "site": "github.com",
+        "author": "pg_hacker",
+        "points": 128,
+        "num_comments": 43,
+        "rank": 1,
+        "topic": "databases",
+        "posted_at": POSTED_AT,
+        "scraped_at": SCRAPED_AT,
+    }
     payload.update(fields)
-    response = await client.post("/records", json=payload)
+    response = await client.post("/stories", json=payload)
     assert response.status_code == 201
     return response.json()
 
 
-async def test_post_creates_record_and_points_at_it_with_location(
+async def test_post_creates_story_and_points_at_it_with_location(
     client: AsyncClient,
 ) -> None:
-    """A 201 carries the created record and a working address for it."""
+    """A 201 carries the created story and a working address for it."""
     response = await client.post(
-        "/records",
-        json={"external_id": "ext-1", "name": "Nazwa", "category": "A", "value": 1.5},
+        "/stories",
+        json={
+            "hn_id": 38101234,
+            "title": "Show HN: A self-hosted Postgres backup tool",
+            "url": "https://github.com/example/pgbackup",
+            "site": "github.com",
+            "author": "pg_hacker",
+            "points": 128,
+            "num_comments": 43,
+            "rank": 1,
+            "posted_at": POSTED_AT,
+            "scraped_at": SCRAPED_AT,
+        },
     )
 
     assert response.status_code == 201
     body = response.json()
     assert body["id"] is not None
-    assert body["external_id"] == "ext-1"
+    assert body["hn_id"] == 38101234
     assert body["created_at"] is not None
 
     location = response.headers["location"]
-    record_id = body["id"]
-    assert location.endswith(f"/records/{record_id}")
+    story_id = body["id"]
+    assert location.endswith(f"/stories/{story_id}")
     # Location has to lead to that same resource, not merely look right.
     followed = await client.get(location)
     assert followed.status_code == 200
-    assert followed.json() == body
+
+    # SQLite has no timestamptz: it stores the datetime and drops the offset,
+    # so the stamps read back from the database no longer carry the "Z" the
+    # request sent, while the 201 still shows the value held in memory. That
+    # is a property of the test dialect, not of the API - on PostgreSQL both
+    # bodies match to the character. Every other field has to be identical.
+    followed_body = followed.json()
+    stamps = {"posted_at", "scraped_at"}
+    assert {k: v for k, v in followed_body.items() if k not in stamps} == {
+        k: v for k, v in body.items() if k not in stamps
+    }
+    assert followed_body["posted_at"].startswith("2026-08-29T06:12:00")
+    assert followed_body["scraped_at"].startswith("2026-08-29T08:00:00")
 
 
-async def test_post_with_taken_external_id_returns_409(client: AsyncClient) -> None:
-    """A repeated external_id is a resource conflict, not a server failure."""
-    await _create(client, external_id="ext-1")
+async def test_post_with_taken_hn_id_returns_409(client: AsyncClient) -> None:
+    """A repeated hn_id is a resource conflict, not a server failure.
+
+    That is the everyday case: the same entry stays on the front page across
+    scrapes, so the importer keeps offering it again.
+    """
+    await _create(client, hn_id=38101234)
 
     response = await client.post(
-        "/records",
-        json={"external_id": "ext-1", "name": "Inna nazwa"},
+        "/stories",
+        json={
+            "hn_id": 38101234,
+            "title": "Show HN: A self-hosted Postgres backup tool",
+            "url": "https://github.com/example/pgbackup",
+            "author": "pg_hacker",
+            "rank": 7,
+            "posted_at": POSTED_AT,
+            "scraped_at": "2026-08-29T09:00:00Z",
+        },
     )
 
     assert response.status_code == 409
 
-    # After the rollback the session still works and the first record remains.
-    listing = await client.get("/records")
+    # After the rollback the session still works and the first story remains.
+    listing = await client.get("/stories")
     assert listing.status_code == 200
     assert listing.json()["total"] == 1
 
 
 async def test_post_with_invalid_body_returns_422(client: AsyncClient) -> None:
-    """The input schema rejects an empty name and unknown fields."""
-    empty_name = await client.post(
-        "/records",
-        json={"external_id": "ext-1", "name": ""},
+    """The input schema rejects an empty title and unknown fields."""
+    empty_title = await client.post(
+        "/stories",
+        json={
+            "hn_id": 38101234,
+            "title": "",
+            "url": "https://github.com/example/pgbackup",
+            "author": "pg_hacker",
+            "rank": 1,
+            "posted_at": POSTED_AT,
+            "scraped_at": SCRAPED_AT,
+        },
     )
     unknown_field = await client.post(
-        "/records",
-        json={"external_id": "ext-1", "name": "Nazwa", "nieznane": 1},
+        "/stories",
+        json={
+            "hn_id": 38101234,
+            "title": "Show HN: A self-hosted Postgres backup tool",
+            "url": "https://github.com/example/pgbackup",
+            "author": "pg_hacker",
+            "rank": 1,
+            "posted_at": POSTED_AT,
+            "scraped_at": SCRAPED_AT,
+            "nieznane": 1,
+        },
     )
 
-    assert empty_name.status_code == 422
+    assert empty_title.status_code == 422
     assert unknown_field.status_code == 422
 
 
@@ -149,9 +217,9 @@ async def test_list_returns_page_shape_with_default_limit(
 ) -> None:
     """With no parameters the page size comes from the settings; total counts all."""
     for index in range(3):
-        await _create(client, external_id=f"ext-{index}", name=f"Nazwa {index}")
+        await _create(client, hn_id=38101234 + index, rank=index + 1)
 
-    response = await client.get("/records")
+    response = await client.get("/stories")
 
     assert response.status_code == 200
     body = response.json()
@@ -163,7 +231,7 @@ async def test_list_returns_page_shape_with_default_limit(
 
 async def test_list_with_limit_above_maximum_returns_422(client: AsyncClient) -> None:
     """The upper page bound comes from max_page_size, not from a literal."""
-    response = await client.get("/records", params={"limit": TEST_MAX_PAGE_SIZE + 1})
+    response = await client.get("/stories", params={"limit": TEST_MAX_PAGE_SIZE + 1})
 
     assert response.status_code == 422
     assert str(TEST_MAX_PAGE_SIZE) in response.json()["detail"]
@@ -173,95 +241,133 @@ async def test_list_passes_ordering_to_the_repository(
     client: AsyncClient,
 ) -> None:
     """order_by and descending change the order, so they reach the query."""
-    for name in ("Alpha", "Beta", "Gamma"):
-        await _create(client, external_id=f"ext-{name}", name=name)
+    titles = (
+        "Ask HN: How do you keep a monorepo fast?",
+        "Rust 1.94 released",
+        "Show HN: A self-hosted Postgres backup tool",
+    )
+    for index, title in enumerate(titles):
+        await _create(client, hn_id=38101234 + index, title=title, rank=index + 1)
 
     response = await client.get(
-        "/records",
-        params={"order_by": "name", "descending": True, "limit": 5},
+        "/stories",
+        params={"order_by": "title", "descending": True, "limit": 5},
     )
 
     assert response.status_code == 200
-    assert [item["name"] for item in response.json()["items"]] == [
-        "Gamma",
-        "Beta",
-        "Alpha",
-    ]
+    assert [item["title"] for item in response.json()["items"]] == list(
+        reversed(titles)
+    )
+
+
+async def test_list_filters_by_is_hiring(client: AsyncClient) -> None:
+    """The is_hiring query parameter reaches the repository filter.
+
+    Left out it narrows nothing, so the job post shows up beside the rest.
+    """
+    await _create(client, hn_id=38101234, rank=1)
+    await _create(
+        client,
+        hn_id=38104567,
+        title="Sourcegraph (YC S13) Is Hiring a Compiler Engineer",
+        url="https://www.ycombinator.com/companies/sourcegraph/jobs",
+        site="ycombinator.com",
+        author="sqs",
+        points=1,
+        num_comments=0,
+        rank=2,
+        is_hiring=True,
+        topic=None,
+        company="Sourcegraph",
+    )
+
+    hiring = await client.get("/stories", params={"is_hiring": True})
+    not_hiring = await client.get("/stories", params={"is_hiring": False})
+    unfiltered = await client.get("/stories")
+
+    assert hiring.status_code == 200
+    assert hiring.json()["total"] == 1
+    assert [item["hn_id"] for item in hiring.json()["items"]] == [38104567]
+
+    assert not_hiring.json()["total"] == 1
+    assert [item["hn_id"] for item in not_hiring.json()["items"]] == [38101234]
+
+    assert unfiltered.json()["total"] == 2
 
 
 async def test_list_with_unknown_order_by_returns_422(client: AsyncClient) -> None:
     """A column outside the sort list is a request error, not a silent fallback."""
-    response = await client.get("/records", params={"order_by": "haslo"})
+    response = await client.get("/stories", params={"order_by": "haslo"})
 
     assert response.status_code == 422
 
 
 async def test_get_unknown_id_returns_404(client: AsyncClient) -> None:
-    """A missing record is a 404, not an empty 200."""
-    response = await client.get("/records/99999")
+    """A missing story is a 404, not an empty 200."""
+    response = await client.get("/stories/99999")
 
     assert response.status_code == 404
 
 
 async def test_patch_unknown_id_returns_404(client: AsyncClient) -> None:
-    """Updating a record that does not exist creates nothing."""
-    response = await client.patch("/records/99999", json={"name": "Nowa"})
+    """Updating a story that does not exist creates nothing."""
+    response = await client.patch("/stories/99999", json={"points": 256})
 
     assert response.status_code == 404
 
 
 async def test_delete_unknown_id_returns_404(client: AsyncClient) -> None:
-    """Deleting a record that does not exist is an error, not a quiet success."""
-    response = await client.delete("/records/99999")
+    """Deleting a story that does not exist is an error, not a quiet success."""
+    response = await client.delete("/stories/99999")
 
     assert response.status_code == 404
 
 
 async def test_patch_leaves_fields_absent_from_body_alone(client: AsyncClient) -> None:
     """A field absent from the request keeps its value instead of turning None."""
-    created = await _create(client, name="Nazwa", category="A", value=1.0)
-    record_id = created["id"]
+    created = await _create(client, points=128, num_comments=43, site="github.com")
+    story_id = created["id"]
 
-    response = await client.patch(f"/records/{record_id}", json={"name": "Zmiana"})
+    response = await client.patch(f"/stories/{story_id}", json={"points": 256})
 
     assert response.status_code == 200
     body = response.json()
-    assert body["name"] == "Zmiana"
-    assert body["category"] == "A"
-    assert body["value"] == 1.0
+    assert body["points"] == 256
+    assert body["num_comments"] == 43
+    assert body["site"] == "github.com"
 
 
-async def test_patch_to_taken_external_id_returns_409(client: AsyncClient) -> None:
-    """Taking over another external_id is the same conflict as on creation."""
-    await _create(client, external_id="ext-1")
-    second = await _create(client, external_id="ext-2")
-    record_id = second["id"]
+async def test_patch_to_taken_hn_id_returns_409(client: AsyncClient) -> None:
+    """Taking over another hn_id is the same conflict as on creation."""
+    await _create(client, hn_id=38101234, rank=1)
+    second = await _create(client, hn_id=38102345, rank=2)
+    story_id = second["id"]
 
     response = await client.patch(
-        f"/records/{record_id}",
-        json={"external_id": "ext-1"},
+        f"/stories/{story_id}",
+        json={"hn_id": 38101234},
     )
 
     assert response.status_code == 409
 
 
-async def test_delete_removes_record_and_returns_204(client: AsyncClient) -> None:
+async def test_delete_removes_story_and_returns_204(client: AsyncClient) -> None:
     """After the delete the response is empty and the resource is gone."""
     created = await _create(client)
-    record_id = created["id"]
+    story_id = created["id"]
 
-    response = await client.delete(f"/records/{record_id}")
+    response = await client.delete(f"/stories/{story_id}")
 
     assert response.status_code == 204
     assert response.content == b""
 
-    followed = await client.get(f"/records/{record_id}")
+    followed = await client.get(f"/stories/{story_id}")
     assert followed.status_code == 404
 
 
 async def test_request_without_key_returns_401(anonymous_client: AsyncClient) -> None:
     """The router guard rejects the request before it reaches the endpoint."""
-    response = await anonymous_client.get("/records")
+    response = await anonymous_client.get("/stories")
 
     assert response.status_code == 401
 

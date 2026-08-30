@@ -1,4 +1,4 @@
-"""HTTP layer of the Record resource: requests mapped onto repository calls.
+"""HTTP layer of the Story resource: requests mapped onto repository calls.
 
 The endpoints know no SQL - each of them only reads the request parameters,
 calls a function from repository.py and turns the result into a status code.
@@ -27,23 +27,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ap_dataservice.config import Settings, get_settings
 from ap_dataservice.db import get_session
-from ap_dataservice.models import Record
+from ap_dataservice.models import Story
 from ap_dataservice.repository import (
-    create_record,
-    delete_record,
-    get_record,
-    list_records,
-    update_record,
+    create_story,
+    delete_story,
+    get_story,
+    list_stories,
+    update_story,
 )
-from ap_dataservice.schemas import Page, RecordCreate, RecordRead, RecordUpdate
+from ap_dataservice.schemas import Page, StoryCreate, StoryRead, StoryUpdate
 from ap_dataservice.security import require_api_key
 
 # Security instead of Depends: the guard behaves the same way, but the key
 # scheme reaches OpenAPI, so /docs gains an Authorize button. Declaring it on
 # the router covers every path of the resource - no endpoint repeats it.
 router = APIRouter(
-    prefix="/records",
-    tags=["records"],
+    prefix="/stories",
+    tags=["stories"],
     dependencies=[Security(require_api_key)],
 )
 
@@ -52,64 +52,75 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 # A mirror of the SORTABLE_COLUMNS keys from repository.py. Literal rather
 # than a plain str, because it gives validation on the FastAPI side (a wrong
-# value is a 422, not a silent sort by created_at) and lists the accepted
+# value is a 422, not a silent sort by scraped_at) and lists the accepted
 # values in OpenAPI. A test guards that both sets agree, as they live apart.
-OrderBy = Literal["created_at", "name", "value", "id"]
+OrderBy = Literal[
+    "scraped_at",
+    "posted_at",
+    "points",
+    "num_comments",
+    "rank",
+    "title",
+    "site",
+    "id",
+]
 
-RECORD_NOT_FOUND_DETAIL = "Record not found"
-DUPLICATE_EXTERNAL_ID_DETAIL = "Record with this external_id already exists"
+STORY_NOT_FOUND_DETAIL = "Story not found"
+DUPLICATE_HN_ID_DETAIL = "Story with this hn_id already exists"
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, response_model=RecordRead)
-async def create_record_endpoint(
-    data: RecordCreate,
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=StoryRead)
+async def create_story_endpoint(
+    data: StoryCreate,
     session: SessionDep,
     request: Request,
     response: Response,
-) -> Record:
-    """Creates a record and returns it with the new address in Location.
+) -> Story:
+    """Creates a story and returns it with the new address in Location.
 
-    external_id is unique in the database, so a repeated import ends with an
-    IntegrityError on write. We catch it here and turn it into a 409: this is
-    a client error (the resource already exists), not a server failure.
+    hn_id is unique in the database, so a repeated scrape of an entry still
+    sitting on the front page ends with an IntegrityError on write. We catch
+    it here and turn it into a 409: this is a client error (the resource
+    already exists), not a server failure.
 
     The Location address is built with url_for by route name, so changing the
     router prefix leaves no stale path behind in the code.
     """
     try:
-        record = await create_record(session, data)
+        story = await create_story(session, data)
         await session.commit()
     except IntegrityError:
         # After a failed write the session stays in an aborted transaction -
         # without the rollback every later use of it would end in an error.
         await session.rollback()
         # from None: the original exception carries the SQL statement, which
-        # has no business showing up in the log beside the client's response.
+        # has no business showing up in the log beside the response.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=DUPLICATE_EXTERNAL_ID_DETAIL,
+            detail=DUPLICATE_HN_ID_DETAIL,
         ) from None
 
     response.headers["Location"] = str(
-        request.url_for("get_record_endpoint", record_id=record.id)
+        request.url_for("get_story_endpoint", story_id=story.id)
     )
-    return record
+    return story
 
 
-@router.get("", response_model=Page[RecordRead])
-async def list_records_endpoint(
+@router.get("", response_model=Page[StoryRead])
+async def list_stories_endpoint(
     session: SessionDep,
     settings: SettingsDep,
     limit: Annotated[int | None, Query(ge=1)] = None,
     offset: Annotated[int, Query(ge=0)] = 0,
-    category: str | None = None,
-    name_contains: str | None = None,
-    value_min: float | None = None,
-    value_max: float | None = None,
-    order_by: OrderBy = "created_at",
+    site: str | None = None,
+    title_contains: str | None = None,
+    points_min: int | None = None,
+    points_max: int | None = None,
+    is_hiring: bool | None = None,
+    order_by: OrderBy = "scraped_at",
     descending: bool = False,
-) -> Page[RecordRead]:
-    """Returns a page of records matching the filters, with their total count.
+) -> Page[StoryRead]:
+    """Returns a page of stories matching the filters, with their total count.
 
     The page size comes from the settings rather than a value written into the
     code: a missing parameter means default_page_size, and a request above
@@ -124,64 +135,65 @@ async def list_records_endpoint(
             detail=f"limit must not exceed max_page_size ({settings.max_page_size})",
         )
 
-    records, total = await list_records(
+    stories, total = await list_stories(
         session,
         limit=page_limit,
         offset=offset,
-        category=category,
-        name_contains=name_contains,
-        value_min=value_min,
-        value_max=value_max,
+        site=site,
+        title_contains=title_contains,
+        points_min=points_min,
+        points_max=points_max,
+        is_hiring=is_hiring,
         order_by=order_by,
         descending=descending,
     )
-    return Page[RecordRead](
-        items=[RecordRead.model_validate(record) for record in records],
+    return Page[StoryRead](
+        items=[StoryRead.model_validate(story) for story in stories],
         total=total,
         limit=page_limit,
         offset=offset,
     )
 
 
-@router.get("/{record_id}", response_model=RecordRead)
-async def get_record_endpoint(record_id: int, session: SessionDep) -> Record:
-    """Returns a single record, or a 404 when the database holds none."""
-    record = await get_record(session, record_id)
-    if record is None:
+@router.get("/{story_id}", response_model=StoryRead)
+async def get_story_endpoint(story_id: int, session: SessionDep) -> Story:
+    """Returns a single story, or a 404 when the database holds none."""
+    story = await get_story(session, story_id)
+    if story is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=RECORD_NOT_FOUND_DETAIL,
+            detail=STORY_NOT_FOUND_DETAIL,
         )
-    return record
+    return story
 
 
-@router.patch("/{record_id}", response_model=RecordRead)
-async def update_record_endpoint(
-    record_id: int,
-    data: RecordUpdate,
+@router.patch("/{story_id}", response_model=StoryRead)
+async def update_story_endpoint(
+    story_id: int,
+    data: StoryUpdate,
     session: SessionDep,
-) -> Record:
-    """Applies the fields sent in the request and returns the changed record.
+) -> Story:
+    """Applies the fields sent in the request and returns the changed story.
 
     Fields left out of the request body stay untouched - exclude_unset in the
-    repository filters them away. Changing external_id to one already taken
-    ends with a 409, just as on creation: it is the same uniqueness conflict.
+    repository filters them away. Changing hn_id to one already taken ends
+    with a 409, just as on creation: it is the same uniqueness conflict.
     """
-    record = await get_record(session, record_id)
-    if record is None:
+    story = await get_story(session, story_id)
+    if story is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=RECORD_NOT_FOUND_DETAIL,
+            detail=STORY_NOT_FOUND_DETAIL,
         )
 
     try:
-        updated = await update_record(session, record, data)
+        updated = await update_story(session, story, data)
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=DUPLICATE_EXTERNAL_ID_DETAIL,
+            detail=DUPLICATE_HN_ID_DETAIL,
         ) from None
 
     # updated_at is filled in by the database (onupdate), so after the write
@@ -193,22 +205,22 @@ async def update_record_endpoint(
 
 
 @router.delete(
-    "/{record_id}",
+    "/{story_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-async def delete_record_endpoint(record_id: int, session: SessionDep) -> None:
-    """Deletes the record and answers with no content, or raises a 404.
+async def delete_story_endpoint(story_id: int, session: SessionDep) -> None:
+    """Deletes the story and answers with no content, or raises a 404.
 
     response_class=Response: a 204 response carries no body, so there is also
     nothing to declare through a content-type header.
     """
-    record = await get_record(session, record_id)
-    if record is None:
+    story = await get_story(session, story_id)
+    if story is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=RECORD_NOT_FOUND_DETAIL,
+            detail=STORY_NOT_FOUND_DETAIL,
         )
 
-    await delete_record(session, record)
+    await delete_story(session, story)
     await session.commit()

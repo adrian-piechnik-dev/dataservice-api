@@ -1,4 +1,4 @@
-"""Data access layer: operations on records, with no knowledge of HTTP.
+"""Data access layer: operations on stories, with no knowledge of HTTP.
 
 Plain functions rather than methods on a class - the session is an explicit
 first argument, so the dependency is visible in the signature and easy to
@@ -15,128 +15,149 @@ from collections.abc import Sequence
 from sqlalchemy import func, nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ap_dataservice.models import Record
-from ap_dataservice.schemas import RecordCreate, RecordUpdate
+from ap_dataservice.models import Story
+from ap_dataservice.schemas import StoryCreate, StoryUpdate
 
 # Allow-list of sortable columns. order_by arrives from outside (a URL
-# parameter), so it must never reach getattr(Record, ...) - a client could
+# parameter), so it must never reach getattr(Story, ...) - a client could
 # otherwise point at any attribute of the model, including a non-column one.
+# created_at and updated_at stay out on purpose: they audit the row in this
+# database, not the entry on Hacker News, so they are nothing to sort a
+# listing by.
 SORTABLE_COLUMNS = {
-    "created_at": Record.created_at,
-    "name": Record.name,
-    "value": Record.value,
-    "id": Record.id,
+    "scraped_at": Story.scraped_at,
+    "posted_at": Story.posted_at,
+    "points": Story.points,
+    "num_comments": Story.num_comments,
+    "rank": Story.rank,
+    "title": Story.title,
+    "site": Story.site,
+    "id": Story.id,
 }
 
 # Used when order_by matches no key of SORTABLE_COLUMNS.
-DEFAULT_ORDER_BY = "created_at"
+DEFAULT_ORDER_BY = "scraped_at"
 
 
-async def create_record(session: AsyncSession, data: RecordCreate) -> Record:
-    """Creates a record from the input data and returns it with an id assigned.
+async def create_story(session: AsyncSession, data: StoryCreate) -> Story:
+    """Creates a story from the input data and returns it with an id assigned.
 
     After the flush the object has its primary key, but the transaction stays
     open.
     """
-    record = Record(
-        external_id=data.external_id,
-        name=data.name,
-        category=data.category,
-        value=data.value,
+    story = Story(
+        hn_id=data.hn_id,
+        title=data.title,
+        url=data.url,
+        site=data.site,
+        author=data.author,
+        points=data.points,
+        num_comments=data.num_comments,
+        rank=data.rank,
+        is_hiring=data.is_hiring,
+        topic=data.topic,
+        company=data.company,
+        posted_at=data.posted_at,
+        scraped_at=data.scraped_at,
     )
-    session.add(record)
+    session.add(story)
     await session.flush()
-    return record
+    return story
 
 
-async def get_record(session: AsyncSession, record_id: int) -> Record | None:
-    """Returns the record with the given primary key, or None when it is absent.
+async def get_story(session: AsyncSession, story_id: int) -> Story | None:
+    """Returns the story with the given primary key, or None when it is absent.
 
     session.get looks in the session identity map first, so fetching the same
-    record again issues no further query.
+    story again issues no further query.
     """
-    return await session.get(Record, record_id)
+    return await session.get(Story, story_id)
 
 
-async def update_record(
+async def update_story(
     session: AsyncSession,
-    record: Record,
-    data: RecordUpdate,
-) -> Record:
-    """Applies to the record only the fields actually sent in the request.
+    story: Story,
+    data: StoryUpdate,
+) -> Story:
+    """Applies to the story only the fields actually sent in the request.
 
     exclude_unset=True tells a field left out (kept unchanged) apart from one
     explicitly set to None (the value is cleared).
     """
     for field, value in data.model_dump(exclude_unset=True).items():
-        setattr(record, field, value)
+        setattr(story, field, value)
     await session.flush()
-    return record
+    return story
 
 
-async def delete_record(session: AsyncSession, record: Record) -> None:
-    """Removes the record from the session and sends the DELETE through flush."""
-    await session.delete(record)
+async def delete_story(session: AsyncSession, story: Story) -> None:
+    """Removes the story from the session and sends the DELETE through flush."""
+    await session.delete(story)
     await session.flush()
 
 
-async def list_records(
+async def list_stories(
     session: AsyncSession,
     *,
     limit: int,
     offset: int,
-    category: str | None = None,
-    name_contains: str | None = None,
-    value_min: float | None = None,
-    value_max: float | None = None,
+    site: str | None = None,
+    title_contains: str | None = None,
+    points_min: int | None = None,
+    points_max: int | None = None,
+    is_hiring: bool | None = None,
     order_by: str = DEFAULT_ORDER_BY,
     descending: bool = False,
-) -> tuple[Sequence[Record], int]:
-    """Returns one page of records and the total number matching the filters.
+) -> tuple[Sequence[Story], int]:
+    """Returns one page of stories and the total number matching the filters.
 
     Filters left as None are skipped, so a missing parameter means "do not
-    narrow", not "compare against NULL". The conditions are joined with AND.
+    narrow", not "compare against NULL". That holds for is_hiring too: None
+    lists hiring and non-hiring entries alike, while False narrows to the
+    entries that are not job posts. The conditions are joined with AND.
 
     total comes from a separate query, under the same conditions but without
     the limit and offset - that is how the client knows how many pages remain.
 
-    An order_by outside SORTABLE_COLUMNS quietly falls back to created_at;
+    An order_by outside SORTABLE_COLUMNS quietly falls back to scraped_at;
     validating the accepted values belongs to the HTTP layer.
     """
     conditions = []
-    if category is not None:
-        conditions.append(Record.category == category)
-    if name_contains is not None:
-        conditions.append(Record.name.ilike(f"%{name_contains}%"))
-    if value_min is not None:
-        conditions.append(Record.value >= value_min)
-    if value_max is not None:
-        conditions.append(Record.value <= value_max)
+    if site is not None:
+        conditions.append(Story.site == site)
+    if title_contains is not None:
+        conditions.append(Story.title.ilike(f"%{title_contains}%"))
+    if points_min is not None:
+        conditions.append(Story.points >= points_min)
+    if points_max is not None:
+        conditions.append(Story.points <= points_max)
+    if is_hiring is not None:
+        conditions.append(Story.is_hiring.is_(is_hiring))
 
-    count_query = select(func.count()).select_from(Record).where(*conditions)
+    count_query = select(func.count()).select_from(Story).where(*conditions)
     # COUNT always returns a row; the "or 0" is here purely for typing, since
     # scalar declares its result as optional.
     total = await session.scalar(count_query) or 0
 
     order_column = SORTABLE_COLUMNS.get(order_by, SORTABLE_COLUMNS[DEFAULT_ORDER_BY])
-    # Record.id breaks ties: with equal values in the leading column the
-    # database could return records in any order, so the same record would land
+    # Story.id breaks ties: with equal values in the leading column the
+    # database could return stories in any order, so the same story would land
     # on two pages one time and on none the next.
     # nulls_last: without it the place of NULL depends on the dialect (SQLite
     # puts them first on ASC, PostgreSQL last), so one and the same page of
-    # results would look different in tests and in production. Record.id is not
+    # results would look different in tests and in production. Story.id is not
     # nullable, so the tie-breaker needs no wrapping.
     if descending:
-        order_clauses = (nulls_last(order_column.desc()), Record.id.desc())
+        order_clauses = (nulls_last(order_column.desc()), Story.id.desc())
     else:
-        order_clauses = (nulls_last(order_column.asc()), Record.id.asc())
+        order_clauses = (nulls_last(order_column.asc()), Story.id.asc())
     query = (
-        select(Record)
+        select(Story)
         .where(*conditions)
         .order_by(*order_clauses)
         .offset(offset)
         .limit(limit)
     )
-    records = (await session.scalars(query)).all()
+    stories = (await session.scalars(query)).all()
 
-    return records, total
+    return stories, total

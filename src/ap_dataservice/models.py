@@ -1,8 +1,8 @@
-"""ORM models: the declarative base and the template's single resource."""
+"""ORM models: the declarative base and the Hacker News story resource."""
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, String, func
+from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -10,23 +10,50 @@ class Base(DeclarativeBase):
     """Shared declarative base for the models (SQLAlchemy 2.0 style)."""
 
 
-class Record(Base):
-    """Record - the neutral template resource, a starting point for a domain."""
+class Story(Base):
+    """Story - one Hacker News entry, as the P1 scraper produces it."""
 
-    __tablename__ = "records"
+    __tablename__ = "stories"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
-    # Identifier assigned by the data source - unique, because it is what tells
-    # us whether a record already exists (an import may run more than once).
-    external_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # Identifier assigned by Hacker News - unique, because it is what tells us
+    # whether a story already exists (a scrape may run more than once, and the
+    # same entry stays on the front page across runs).
+    hn_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
 
-    name: Mapped[str] = mapped_column(String(255), index=True)
-    category: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    title: Mapped[str] = mapped_column(String(512), index=True)
+    url: Mapped[str] = mapped_column(String(2048))
 
-    # The database supplies the time (server_default), so the stamp is consistent
-    # whatever the app process clock says. timezone=True: timestamptz on Postgres.
+    # Host the entry points at. Empty for a self-post (Ask HN, Show HN without
+    # a link), where the story is the discussion itself.
+    site: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    author: Mapped[str] = mapped_column(String(255))
+
+    points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    num_comments: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Position on the front page at the moment of the scrape - a property of
+    # the listing, not of the entry, so it changes between runs.
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    is_hiring: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    topic: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    company: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Both stamps come from the scraper, not from this database: posted_at is
+    # when Hacker News published the entry, scraped_at when P1 read it.
+    posted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    scraped_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    # Row audit, separate from the source stamps above: the database supplies
+    # the time (server_default), so it is consistent whatever the app process
+    # clock says. timezone=True: timestamptz on Postgres.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -42,4 +69,4 @@ class Record(Base):
 
     def __repr__(self) -> str:
         """Concise diagnostic representation (id and source identifier)."""
-        return f"<Record id={self.id} external_id={self.external_id!r}>"
+        return f"<Story id={self.id} hn_id={self.hn_id!r}>"

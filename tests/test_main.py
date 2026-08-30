@@ -4,7 +4,7 @@ The schema is read through a client, from the actually served /openapi.json
 path rather than from app.openapi() in memory - what counts is what a browser
 sees on /docs, not an object living inside the test process.
 
-No test calls the /records endpoints, so dependency_overrides has nothing to
+No test calls the /stories endpoints, so dependency_overrides has nothing to
 replace here: /openapi.json needs neither an API key nor a database session.
 The metadata create_app reads on call is swapped in with monkeypatch.
 """
@@ -91,22 +91,22 @@ def test_documented_header_matches_the_guard(
     assert scheme["name"] == API_KEY_HEADER_NAME
 
 
-def test_every_records_operation_requires_a_key(
+def test_every_stories_operation_requires_a_key(
     openapi_schema: dict[str, Any],
 ) -> None:
     """The guard on the router really did mark every operation of the resource.
 
     The security requirement sits on operations rather than on paths, so we go
-    one level down - to the HTTP methods of every /records path.
+    one level down - to the HTTP methods of every /stories path.
     """
     operations = [
         (path, method, operation)
         for path, methods in openapi_schema["paths"].items()
-        if path.startswith("/records")
+        if path.startswith("/stories")
         for method, operation in methods.items()
     ]
 
-    assert operations, "the schema documents no operation on /records"
+    assert operations, "the schema documents no operation on /stories"
     for path, method, operation in operations:
         assert operation.get("security"), f"{method.upper()} {path} is not secured"
 
