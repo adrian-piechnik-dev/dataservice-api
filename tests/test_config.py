@@ -70,7 +70,10 @@ def test_applies_defaults_for_metadata_fields(monkeypatch: pytest.MonkeyPatch) -
 
     assert settings.app_title == "dataservice-api"
     assert settings.app_description == (
-        "Template for building REST APIs with FastAPI, SQLAlchemy and PostgreSQL"
+        "REST API serving Hacker News front-page stories collected by the "
+        "smartscraper-ai pipeline. Async FastAPI + SQLAlchemy 2.0 over "
+        "PostgreSQL, with API-key auth, filtering, pagination and Alembic "
+        "migrations."
     )
     assert settings.app_version == "0.1.0"
 

@@ -5,7 +5,8 @@ User-facing documentation lives in `README.md` — this file is the working cont
 
 ## Project
 
-Async REST API template: FastAPI, SQLAlchemy 2.0 async, Alembic, API-key auth.
+Async REST API serving Hacker News front-page stories scraped by the P1
+project smartscraper-ai: FastAPI, SQLAlchemy 2.0 async, Alembic, API-key auth.
 The package `ap_dataservice` is split one concern per module: `config.py` (settings),
 `db.py` (engine and session), `models.py` (ORM), `schemas.py` (Pydantic
 contracts), `repository.py` (data access), `routes.py` (HTTP), `security.py`
@@ -19,9 +20,10 @@ pip install -e ".[dev]"                          # install with dev dependencies
 pytest -q                                        # run the test suite
 alembic upgrade head                             # apply migrations
 alembic revision --autogenerate -m "message"     # create a migration
+python -m scripts.seed_from_csv                  # load examples/hn_demo.csv
 uvicorn ap_dataservice.main:app --reload         # run the dev server
-docker build -t tpl-fastapi .                    # build the image
-docker run --rm -p 8000:8000 -e DATABASE_URL=... -e API_KEY=... tpl-fastapi
+docker build -t dataservice-api .                # build the image
+docker run --rm -p 8000:8000 -e DATABASE_URL=... -e API_KEY=... dataservice-api
 ```
 
 `alembic` and `pytest` both need `DATABASE_URL` and `API_KEY` in the environment
@@ -30,7 +32,7 @@ or in `.env` — settings are validated before either command does anything.
 ## Architecture conventions
 
 - **src layout**, package `ap_dataservice` under `src/`. Imports are always absolute
-  (`from ap_dataservice.models import Record`).
+  (`from ap_dataservice.models import Story`).
 - **Async throughout**: async endpoints, `AsyncSession`, `create_async_engine`.
   No sync database calls.
 - **Settings are fail-fast**: `DATABASE_URL` and `API_KEY` are required, so a
@@ -57,7 +59,7 @@ or in `.env` — settings are validated before either command does anything.
   `session` fixtures in `conftest.py`, created and dropped per test. No shared
   state, no cleanup code.
 - **One test module per layer**: `test_config`, `test_schemas`, `test_repository`,
-  `test_routes`, `test_security`, `test_main`, `test_list_records`,
+  `test_routes`, `test_security`, `test_main`, `test_list_stories`,
   `test_db_smoke`. Put a new test where its layer already lives.
 - `asyncio_mode = "auto"` is set in `pyproject.toml`, so async tests need no
   `@pytest.mark.asyncio` marker.
@@ -67,7 +69,7 @@ or in `.env` — settings are validated before either command does anything.
   `get_settings` (see `test_routes.py`, `test_security.py`), not by patching
   modules. `test_main.py` is the exception: `create_app` reads settings at call
   time, so it uses `monkeypatch` on `ap_dataservice.main.get_settings`.
-- 61 tests currently pass. A change that alters the count should say so.
+- 64 tests currently pass. A change that alters the count should say so.
 
 ## Boundaries
 
