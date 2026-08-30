@@ -10,8 +10,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from ap_api.config import get_settings
-from ap_api.routes import router
+from ap_dataservice.config import get_settings
+from ap_dataservice.routes import router
 
 
 @asynccontextmanager
@@ -46,5 +46,5 @@ def create_app() -> FastAPI:
     return application
 
 
-# Entry point for the server: uvicorn ap_api.main:app
+# Entry point for the server: uvicorn ap_dataservice.main:app
 app = create_app()

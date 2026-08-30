@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import StaticPool
 
-from ap_api.models import Base
+from ap_dataservice.models import Base
 
 
 @pytest.fixture

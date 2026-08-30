@@ -11,13 +11,13 @@ independent of whether the session fixture sets expire_on_commit to False.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ap_api.repository import (
+from ap_dataservice.repository import (
     create_record,
     delete_record,
     get_record,
     update_record,
 )
-from ap_api.schemas import RecordCreate, RecordUpdate
+from ap_dataservice.schemas import RecordCreate, RecordUpdate
 
 
 async def test_create_record_assigns_id_and_created_at(session: AsyncSession) -> None:

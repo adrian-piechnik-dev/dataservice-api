@@ -7,8 +7,8 @@ asks for a ready database and checks one aspect of the query.
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ap_api.repository import create_record, list_records
-from ap_api.schemas import RecordCreate
+from ap_dataservice.repository import create_record, list_records
+from ap_dataservice.schemas import RecordCreate
 
 # Test data: two records share value=20.0 (ordering stability), and the last
 # one has an empty category and value (how the filters treat NULL).

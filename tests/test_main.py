@@ -17,9 +17,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from ap_api.config import Settings
-from ap_api.main import create_app
-from ap_api.security import API_KEY_HEADER_NAME
+from ap_dataservice.config import Settings
+from ap_dataservice.main import create_app
+from ap_dataservice.security import API_KEY_HEADER_NAME
 
 # The scheme name under which FastAPI documents the guard from security.py.
 API_KEY_SCHEME_NAME = "APIKeyHeader"
@@ -131,7 +131,7 @@ def test_openapi_metadata_comes_from_settings(
             _env_file=None,
         )
 
-    monkeypatch.setattr("ap_api.main.get_settings", fake_settings)
+    monkeypatch.setattr("ap_dataservice.main.get_settings", fake_settings)
 
     info = create_app().openapi()["info"]
 
@@ -146,4 +146,4 @@ def test_default_version_matches_package_version() -> None:
     Bumping the number in the package without touching the settings would slip
     by unnoticed: openapi.json would report a version that no longer exists.
     """
-    assert Settings.model_fields["app_version"].default == version("ap-api")
+    assert Settings.model_fields["app_version"].default == version("dataservice-api")

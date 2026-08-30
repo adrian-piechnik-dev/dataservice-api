@@ -64,7 +64,7 @@ An async REST API template built on FastAPI, SQLAlchemy 2.0 (async), Alembic mig
 6. Run the development server:
 
    ```bash
-   uvicorn ap_api.main:app --reload
+   uvicorn ap_dataservice.main:app --reload
    ```
 
 7. Open <http://localhost:8000/docs>. Use the **Authorize** button to send your
@@ -112,7 +112,7 @@ docker run --rm \
 ## Project structure
 
 ```
-src/ap_api/
+src/ap_dataservice/
 ├── __init__.py
 ├── config.py       # Settings read from the environment (fail-fast)
 ├── db.py           # Async engine, session factory, FastAPI dependency

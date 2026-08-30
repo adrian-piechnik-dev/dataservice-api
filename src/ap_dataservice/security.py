@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 
-from ap_api.config import Settings, get_settings
+from ap_dataservice.config import Settings, get_settings
 
 # The header name is part of the API contract, so it lives in a single place
 # (the security scheme, the docs and the tests all read it from here).

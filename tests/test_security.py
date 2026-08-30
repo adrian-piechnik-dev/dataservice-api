@@ -16,8 +16,8 @@ import pytest
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from ap_api.config import Settings, get_settings
-from ap_api.security import (
+from ap_dataservice.config import Settings, get_settings
+from ap_dataservice.security import (
     API_KEY_HEADER_NAME,
     INVALID_API_KEY_DETAIL,
     require_api_key,

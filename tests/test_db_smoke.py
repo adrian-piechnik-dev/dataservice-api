@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ap_api.models import Record
+from ap_dataservice.models import Record
 
 
 async def test_record_roundtrip(session: AsyncSession) -> None:

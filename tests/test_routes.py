@@ -18,11 +18,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ap_api.config import Settings, get_settings
-from ap_api.db import get_session
-from ap_api.repository import DEFAULT_ORDER_BY, SORTABLE_COLUMNS
-from ap_api.routes import OrderBy, router
-from ap_api.security import API_KEY_HEADER_NAME
+from ap_dataservice.config import Settings, get_settings
+from ap_dataservice.db import get_session
+from ap_dataservice.repository import DEFAULT_ORDER_BY, SORTABLE_COLUMNS
+from ap_dataservice.routes import OrderBy, router
+from ap_dataservice.security import API_KEY_HEADER_NAME
 
 VALID_API_KEY = "sekret-testowy-123"
 

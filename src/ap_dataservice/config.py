@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # Metadata shown in /docs and openapi.json. The defaults mirror the
     # [project] section of pyproject.toml - a test guards that the version
     # numbers stay in step, because the two are written down separately.
-    app_title: str = "ap-api"
+    app_title: str = "dataservice-api"
     app_description: str = (
         "Template for building REST APIs with FastAPI, SQLAlchemy and PostgreSQL"
     )

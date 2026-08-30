@@ -25,18 +25,18 @@ from fastapi import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ap_api.config import Settings, get_settings
-from ap_api.db import get_session
-from ap_api.models import Record
-from ap_api.repository import (
+from ap_dataservice.config import Settings, get_settings
+from ap_dataservice.db import get_session
+from ap_dataservice.models import Record
+from ap_dataservice.repository import (
     create_record,
     delete_record,
     get_record,
     list_records,
     update_record,
 )
-from ap_api.schemas import Page, RecordCreate, RecordRead, RecordUpdate
-from ap_api.security import require_api_key
+from ap_dataservice.schemas import Page, RecordCreate, RecordRead, RecordUpdate
+from ap_dataservice.security import require_api_key
 
 # Security instead of Depends: the guard behaves the same way, but the key
 # scheme reaches OpenAPI, so /docs gains an Authorize button. Declaring it on

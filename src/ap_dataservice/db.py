@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from ap_api.config import get_settings
+from ap_dataservice.config import get_settings
 
 
 @lru_cache

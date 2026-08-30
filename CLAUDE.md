@@ -6,7 +6,7 @@ User-facing documentation lives in `README.md` — this file is the working cont
 ## Project
 
 Async REST API template: FastAPI, SQLAlchemy 2.0 async, Alembic, API-key auth.
-The package `ap_api` is split one concern per module: `config.py` (settings),
+The package `ap_dataservice` is split one concern per module: `config.py` (settings),
 `db.py` (engine and session), `models.py` (ORM), `schemas.py` (Pydantic
 contracts), `repository.py` (data access), `routes.py` (HTTP), `security.py`
 (auth), `main.py` (application factory). Keep new code inside that split —
@@ -19,7 +19,7 @@ pip install -e ".[dev]"                          # install with dev dependencies
 pytest -q                                        # run the test suite
 alembic upgrade head                             # apply migrations
 alembic revision --autogenerate -m "message"     # create a migration
-uvicorn ap_api.main:app --reload                 # run the dev server
+uvicorn ap_dataservice.main:app --reload         # run the dev server
 docker build -t tpl-fastapi .                    # build the image
 docker run --rm -p 8000:8000 -e DATABASE_URL=... -e API_KEY=... tpl-fastapi
 ```
@@ -29,8 +29,8 @@ or in `.env` — settings are validated before either command does anything.
 
 ## Architecture conventions
 
-- **src layout**, package `ap_api` under `src/`. Imports are always absolute
-  (`from ap_api.models import Record`).
+- **src layout**, package `ap_dataservice` under `src/`. Imports are always absolute
+  (`from ap_dataservice.models import Record`).
 - **Async throughout**: async endpoints, `AsyncSession`, `create_async_engine`.
   No sync database calls.
 - **Settings are fail-fast**: `DATABASE_URL` and `API_KEY` are required, so a
@@ -66,7 +66,7 @@ or in `.env` — settings are validated before either command does anything.
 - Dependencies are swapped with `dependency_overrides` on `get_session` and
   `get_settings` (see `test_routes.py`, `test_security.py`), not by patching
   modules. `test_main.py` is the exception: `create_app` reads settings at call
-  time, so it uses `monkeypatch` on `ap_api.main.get_settings`.
+  time, so it uses `monkeypatch` on `ap_dataservice.main.get_settings`.
 - 61 tests currently pass. A change that alters the count should say so.
 
 ## Boundaries

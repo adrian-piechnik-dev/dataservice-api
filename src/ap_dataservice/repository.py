@@ -15,8 +15,8 @@ from collections.abc import Sequence
 from sqlalchemy import func, nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ap_api.models import Record
-from ap_api.schemas import RecordCreate, RecordUpdate
+from ap_dataservice.models import Record
+from ap_dataservice.schemas import RecordCreate, RecordUpdate
 
 # Allow-list of sortable columns. order_by arrives from outside (a URL
 # parameter), so it must never reach getattr(Record, ...) - a client could

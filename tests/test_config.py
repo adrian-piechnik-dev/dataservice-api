@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from ap_api.config import Settings
+from ap_dataservice.config import Settings
 
 
 def _clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -68,7 +68,7 @@ def test_applies_defaults_for_metadata_fields(monkeypatch: pytest.MonkeyPatch) -
 
     settings = Settings(_env_file=None)
 
-    assert settings.app_title == "ap-api"
+    assert settings.app_title == "dataservice-api"
     assert settings.app_description == (
         "Template for building REST APIs with FastAPI, SQLAlchemy and PostgreSQL"
     )

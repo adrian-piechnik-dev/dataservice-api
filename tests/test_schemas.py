@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from ap_api.schemas import RecordCreate, RecordRead, RecordUpdate
+from ap_dataservice.schemas import RecordCreate, RecordRead, RecordUpdate
 
 
 def test_create_rejects_empty_name() -> None:
