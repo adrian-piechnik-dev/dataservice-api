@@ -229,6 +229,53 @@ async def test_title_contains_treats_percent_as_literal(
     assert total == 1
 
 
+async def test_title_contains_treats_backslash_as_literal(
+    session: AsyncSession,
+    sample_stories: None,
+) -> None:
+    """A backslash searches for a backslash - it is the escape character itself.
+
+    The query carries an underscore as well, and that is the point: a lone
+    backslash survives either order of the replacements in _escape_like, since
+    there is nothing else for it to collide with. Only a value holding both a
+    backslash and a metacharacter shows whether the escape character was
+    doubled before or after the metacharacter's own escape was inserted.
+
+    The second story is the same text without the backslash, so the assertion
+    says the filter matched the backslash rather than merely everything.
+    """
+    for hn_id, title in (
+        (38107890, r"Bug report: path C:\_tmp is ignored"),
+        (38108901, "Bug report: path C:_tmp is ignored"),
+    ):
+        await create_story(
+            session,
+            StoryCreate(
+                hn_id=hn_id,
+                title=title,
+                url="https://github.com/example/pgbackup/issues/1",
+                site="github.com",
+                author="win_dev",
+                points=7,
+                num_comments=2,
+                rank=7,
+                posted_at=datetime(2026, 8, 28, 11, 15, tzinfo=timezone.utc),
+                scraped_at=SCRAPED_AT,
+            ),
+        )
+    await session.commit()
+
+    stories, total = await list_stories(
+        session,
+        limit=100,
+        offset=0,
+        title_contains=r"C:\_tmp",
+    )
+
+    assert [story.hn_id for story in stories] == [38107890]
+    assert total == 1
+
+
 async def test_is_hiring_filter_selects_and_excludes_job_posts(
     session: AsyncSession,
     sample_stories: None,
