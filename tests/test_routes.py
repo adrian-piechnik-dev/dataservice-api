@@ -260,6 +260,19 @@ async def test_list_with_offset_above_maximum_returns_422(client: AsyncClient) -
     assert str(TEST_MAX_OFFSET) in response.json()["detail"]
 
 
+async def test_offset_on_the_maximum_is_allowed(client: AsyncClient) -> None:
+    """max_offset is the last offset served, not the first one refused.
+
+    The bound is inclusive, like max_page_size. Turning the comparison into
+    ">=" would quietly cost the caller the final page and no other test would
+    notice - the rejection cases pass either way.
+    """
+    response = await client.get("/stories", params={"offset": TEST_MAX_OFFSET})
+
+    assert response.status_code == 200
+    assert response.json()["offset"] == TEST_MAX_OFFSET
+
+
 async def test_out_of_range_integers_are_422_not_500(client: AsyncClient) -> None:
     """A number wider than the column is a bad request, not a server failure.
 
