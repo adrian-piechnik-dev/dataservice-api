@@ -13,6 +13,8 @@ def _clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "API_KEY",
         "DEFAULT_PAGE_SIZE",
         "MAX_PAGE_SIZE",
+        "MAX_OFFSET",
+        "ALLOWED_HOSTS",
         "APP_TITLE",
         "APP_DESCRIPTION",
         "APP_VERSION",
@@ -40,6 +42,41 @@ def test_applies_defaults_for_optional_fields(monkeypatch: pytest.MonkeyPatch) -
 
     assert settings.default_page_size == 50
     assert settings.max_page_size == 200
+
+
+def test_applies_defaults_for_request_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The offset ceiling and the host allow-list ship with working defaults.
+
+    A deployment that sets neither still refuses deep paging and still checks
+    the Host header - the protection is not opt-in.
+    """
+    _clear_settings_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+    monkeypatch.setenv("API_KEY", "secret-123")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.max_offset == 100_000
+    assert settings.allowed_hosts == "localhost,127.0.0.1,*.onrender.com"
+    assert settings.allowed_hosts_list == ["localhost", "127.0.0.1", "*.onrender.com"]
+
+
+def test_allowed_hosts_list_splits_and_drops_blanks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whitespace and a stray comma are the environment's doing, not a host.
+
+    A blank entry left in the list would become a pattern matching nothing,
+    which is harmless but hides a typo instead of surviving it.
+    """
+    _clear_settings_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+    monkeypatch.setenv("API_KEY", "secret-123")
+    monkeypatch.setenv("ALLOWED_HOSTS", " api.example.com , localhost ,, ")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.allowed_hosts_list == ["api.example.com", "localhost"]
 
 
 def test_coerces_numeric_string_to_int(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,6 +1,10 @@
 # Secrets - the real .env never reaches the repo (this template gets cloned).
 # The variable template lives in .env.example.
+# The .env.* pattern covers the per-deployment variants too (.env.local,
+# .env.production); the negation has to follow it, or git ignores the exception.
 .env
+.env.*
+!.env.example
 
 # Local database - a runtime artifact, not code.
 *.db

@@ -33,11 +33,17 @@ def app() -> FastAPI:
 
 @pytest.fixture
 async def client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
-    """A client talking to the application over ASGI, without a socket."""
+    """A client talking to the application over ASGI, without a socket.
+
+    The base URL names localhost rather than the conventional "testserver",
+    because create_app puts TrustedHostMiddleware in front of the routes and
+    the default allow-list carries the hosts the service actually answers to -
+    a test hostname is not one of them.
+    """
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,
-        base_url="http://testserver",
+        base_url="http://localhost",
     ) as test_client:
         yield test_client
 
@@ -109,6 +115,39 @@ def test_every_stories_operation_requires_a_key(
     assert operations, "the schema documents no operation on /stories"
     for path, method, operation in operations:
         assert operation.get("security"), f"{method.upper()} {path} is not secured"
+
+
+async def test_request_from_untrusted_host_is_rejected(app: FastAPI) -> None:
+    """A Host outside the allow-list is answered before any handler runs.
+
+    url_for builds the Location header of a 201 out of the request Host, so an
+    unchecked one lets a caller aim that address wherever they like. The 400
+    here is what stops that.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://evil.example.com",
+    ) as untrusted_client:
+        response = await untrusted_client.get("/openapi.json")
+
+    assert response.status_code == 400
+
+
+async def test_request_from_deployment_host_is_allowed(app: FastAPI) -> None:
+    """The default allow-list covers the host the service is deployed under.
+
+    The pattern is a wildcard, so this guards that it really matches a
+    subdomain and the guard did not lock out production along with attackers.
+    """
+    transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://dataservice-api.onrender.com",
+    ) as deployed_client:
+        response = await deployed_client.get("/openapi.json")
+
+    assert response.status_code == 200
 
 
 def test_openapi_metadata_comes_from_settings(

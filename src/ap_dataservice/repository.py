@@ -38,6 +38,26 @@ SORTABLE_COLUMNS = {
 # Used when order_by matches no key of SORTABLE_COLUMNS.
 DEFAULT_ORDER_BY = "scraped_at"
 
+# Escape character declared to LIKE/ILIKE. A backslash is the conventional
+# choice, and no dialect we target treats it as one by default - Postgres does
+# for LIKE but not with an explicit ESCAPE clause, so we always pass one.
+LIKE_ESCAPE_CHAR = "\\"
+
+
+def _escape_like(value: str) -> str:
+    """Makes a user string match literally inside a LIKE/ILIKE pattern.
+
+    Without this, '%' and '_' arriving from a query parameter would keep their
+    wildcard meaning: '%' alone matches every row, and 'rust_analyzer' would
+    also match 'rust-analyzer'. The filter would stop filtering.
+
+    The escape character goes first - escaping it after '%' and '_' would
+    double the backslashes this function itself inserted.
+    """
+    for char in (LIKE_ESCAPE_CHAR, "%", "_"):
+        value = value.replace(char, LIKE_ESCAPE_CHAR + char)
+    return value
+
 
 async def create_story(session: AsyncSession, data: StoryCreate) -> Story:
     """Creates a story from the input data and returns it with an id assigned.
@@ -116,6 +136,9 @@ async def list_stories(
     lists hiring and non-hiring entries alike, while False narrows to the
     entries that are not job posts. The conditions are joined with AND.
 
+    title_contains matches a literal fragment: its LIKE metacharacters are
+    escaped, so '%' looks for a per-cent sign rather than for everything.
+
     total comes from a separate query, under the same conditions but without
     the limit and offset - that is how the client knows how many pages remain.
 
@@ -126,7 +149,12 @@ async def list_stories(
     if site is not None:
         conditions.append(Story.site == site)
     if title_contains is not None:
-        conditions.append(Story.title.ilike(f"%{title_contains}%"))
+        conditions.append(
+            Story.title.ilike(
+                f"%{_escape_like(title_contains)}%",
+                escape=LIKE_ESCAPE_CHAR,
+            )
+        )
     if points_min is not None:
         conditions.append(Story.points >= points_min)
     if points_max is not None:

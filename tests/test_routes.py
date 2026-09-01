@@ -21,7 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ap_dataservice.config import Settings, get_settings
 from ap_dataservice.db import get_session
 from ap_dataservice.repository import DEFAULT_ORDER_BY, SORTABLE_COLUMNS
-from ap_dataservice.routes import OrderBy, router
+from ap_dataservice.routes import (
+    INT32_MAX,
+    INT32_MIN,
+    SITE_MAX_LENGTH,
+    TITLE_MAX_LENGTH,
+    OrderBy,
+    router,
+)
 from ap_dataservice.security import API_KEY_HEADER_NAME
 
 VALID_API_KEY = "sekret-testowy-123"
@@ -30,6 +37,9 @@ VALID_API_KEY = "sekret-testowy-123"
 # shorter than the data set, and max_page_size=5 is easy to exceed in a request.
 TEST_DEFAULT_PAGE_SIZE = 2
 TEST_MAX_PAGE_SIZE = 5
+
+# Small enough to step over in a request, the same way max_page_size is.
+TEST_MAX_OFFSET = 10
 
 # The scraper timestamps, in the shape they travel over JSON.
 POSTED_AT = "2026-08-29T06:12:00Z"
@@ -43,6 +53,7 @@ def _test_settings() -> Settings:
         api_key=VALID_API_KEY,
         default_page_size=TEST_DEFAULT_PAGE_SIZE,
         max_page_size=TEST_MAX_PAGE_SIZE,
+        max_offset=TEST_MAX_OFFSET,
         _env_file=None,
     )
 
@@ -235,6 +246,88 @@ async def test_list_with_limit_above_maximum_returns_422(client: AsyncClient) ->
 
     assert response.status_code == 422
     assert str(TEST_MAX_PAGE_SIZE) in response.json()["detail"]
+
+
+async def test_list_with_offset_above_maximum_returns_422(client: AsyncClient) -> None:
+    """The offset ceiling comes from max_offset, the same way limit's does.
+
+    OFFSET makes the database produce and discard every row before it, so an
+    unbounded value is work a caller can ask for and nobody can use.
+    """
+    response = await client.get("/stories", params={"offset": TEST_MAX_OFFSET + 1})
+
+    assert response.status_code == 422
+    assert str(TEST_MAX_OFFSET) in response.json()["detail"]
+
+
+async def test_out_of_range_integers_are_422_not_500(client: AsyncClient) -> None:
+    """A number wider than the column is a bad request, not a server failure.
+
+    Unbounded, each of these reaches the driver and fails while the parameter
+    is being bound - an unhandled error the client sees as a 500.
+
+    points_min is checked at both ends: a number too negative overflows exactly
+    as a number too large does, so a bound on one side alone would leave half
+    the hole open. The values on the bounds themselves must still pass, or the
+    fix would have cost the caller part of the column's range.
+    """
+    for parameter in ("offset", "points_min", "points_max"):
+        response = await client.get("/stories", params={parameter: INT32_MAX + 1})
+        assert response.status_code == 422, parameter
+
+    below_range = await client.get("/stories", params={"points_min": INT32_MIN - 1})
+    assert below_range.status_code == 422
+
+    for value in (INT32_MIN, INT32_MAX):
+        on_bound = await client.get("/stories", params={"points_min": value})
+        assert on_bound.status_code == 200, value
+
+
+async def test_out_of_range_story_id_is_422_not_500(client: AsyncClient) -> None:
+    """The identifier in the path is bounded to what the id column holds.
+
+    A negative id stays a 404 though - it is a story that does not exist, not
+    a malformed request.
+    """
+    too_large = await client.get(f"/stories/{INT32_MAX + 1}")
+    negative = await client.get("/stories/-1")
+
+    assert too_large.status_code == 422
+    assert negative.status_code == 404
+
+
+async def test_overlong_filter_values_return_422(client: AsyncClient) -> None:
+    """A filter longer than its column can never match, so it is refused."""
+    long_site = await client.get(
+        "/stories",
+        params={"site": "a" * (SITE_MAX_LENGTH + 1)},
+    )
+    long_title = await client.get(
+        "/stories",
+        params={"title_contains": "a" * (TITLE_MAX_LENGTH + 1)},
+    )
+
+    assert long_site.status_code == 422
+    assert long_title.status_code == 422
+
+
+async def test_title_contains_metacharacters_match_literally(
+    client: AsyncClient,
+) -> None:
+    """Through HTTP too, '%' searches for a per-cent sign and not for anything.
+
+    The repository escapes the pattern; this checks the parameter really gets
+    there, so the guard cannot be lost between the layers.
+    """
+    await _create(client, hn_id=38101234, title="Bun 1.2 starts 50% faster", rank=1)
+    await _create(client, hn_id=38102345, title="Rust 1.94 released", rank=2)
+
+    response = await client.get("/stories", params={"title_contains": "%"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert [item["hn_id"] for item in body["items"]] == [38101234]
 
 
 async def test_list_passes_ordering_to_the_repository(

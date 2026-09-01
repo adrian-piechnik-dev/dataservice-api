@@ -16,6 +16,7 @@ from fastapi import (
     APIRouter,
     Depends,
     HTTPException,
+    Path,
     Query,
     Request,
     Response,
@@ -47,8 +48,25 @@ router = APIRouter(
     dependencies=[Security(require_api_key)],
 )
 
+# The integer columns are SQLAlchemy Integer, which is a 4-byte int on both
+# dialects we run on. A number outside that range reaches the driver and fails
+# while the parameter is being bound - an unhandled error, so a 500 for what is
+# plainly a bad request. The bounds turn it into the 422 it always was.
+INT32_MIN = -2_147_483_648
+INT32_MAX = 2_147_483_647
+
+# Text filters are compared against these columns, so a longer value can never
+# match anything - it is rejected instead of scanned for.
+SITE_MAX_LENGTH = 255
+TITLE_MAX_LENGTH = 512
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+# The identifier in the path, bounded to what the id column can hold. The lower
+# bound is the column minimum rather than 1: a negative id is still a story
+# that does not exist, so it stays a 404 and does not turn into a 422.
+StoryIdPath = Annotated[int, Path(ge=INT32_MIN, le=INT32_MAX)]
 
 # A mirror of the SORTABLE_COLUMNS keys from repository.py. Literal rather
 # than a plain str, because it gives validation on the FastAPI side (a wrong
@@ -111,11 +129,14 @@ async def list_stories_endpoint(
     session: SessionDep,
     settings: SettingsDep,
     limit: Annotated[int | None, Query(ge=1)] = None,
-    offset: Annotated[int, Query(ge=0)] = 0,
-    site: str | None = None,
-    title_contains: str | None = None,
-    points_min: int | None = None,
-    points_max: int | None = None,
+    offset: Annotated[int, Query(ge=0, le=INT32_MAX)] = 0,
+    site: Annotated[str | None, Query(max_length=SITE_MAX_LENGTH)] = None,
+    title_contains: Annotated[
+        str | None,
+        Query(max_length=TITLE_MAX_LENGTH),
+    ] = None,
+    points_min: Annotated[int | None, Query(ge=INT32_MIN, le=INT32_MAX)] = None,
+    points_max: Annotated[int | None, Query(ge=INT32_MIN, le=INT32_MAX)] = None,
     is_hiring: bool | None = None,
     order_by: OrderBy = "scraped_at",
     descending: bool = False,
@@ -126,13 +147,21 @@ async def list_stories_endpoint(
     code: a missing parameter means default_page_size, and a request above
     max_page_size is rejected. The upper bound cannot go into Query(le=...),
     because that value is fixed once, at module import - so we read it from
-    the settings on every request.
+    the settings on every request. offset is bounded the same way and for the
+    same reason: OFFSET makes the database produce and discard every row before
+    it, so paging arbitrarily deep is work nobody asked for.
     """
     page_limit = settings.default_page_size if limit is None else limit
     if page_limit > settings.max_page_size:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"limit must not exceed max_page_size ({settings.max_page_size})",
+        )
+
+    if offset > settings.max_offset:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"offset must not exceed max_offset ({settings.max_offset})",
         )
 
     stories, total = await list_stories(
@@ -156,7 +185,7 @@ async def list_stories_endpoint(
 
 
 @router.get("/{story_id}", response_model=StoryRead)
-async def get_story_endpoint(story_id: int, session: SessionDep) -> Story:
+async def get_story_endpoint(story_id: StoryIdPath, session: SessionDep) -> Story:
     """Returns a single story, or a 404 when the database holds none."""
     story = await get_story(session, story_id)
     if story is None:
@@ -169,7 +198,7 @@ async def get_story_endpoint(story_id: int, session: SessionDep) -> Story:
 
 @router.patch("/{story_id}", response_model=StoryRead)
 async def update_story_endpoint(
-    story_id: int,
+    story_id: StoryIdPath,
     data: StoryUpdate,
     session: SessionDep,
 ) -> Story:
@@ -209,7 +238,7 @@ async def update_story_endpoint(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-async def delete_story_endpoint(story_id: int, session: SessionDep) -> None:
+async def delete_story_endpoint(story_id: StoryIdPath, session: SessionDep) -> None:
     """Deletes the story and answers with no content, or raises a 404.
 
     response_class=Response: a 204 response carries no body, so there is also

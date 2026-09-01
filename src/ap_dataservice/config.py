@@ -17,6 +17,19 @@ class Settings(BaseSettings):
     default_page_size: int = 50
     max_page_size: int = 200
 
+    # Upper bound for offset. Paging past this point makes the database build
+    # and throw away the whole prefix on every request, and the data set is one
+    # Hacker News front page per scrape - a client that far in should be
+    # filtering or sorting, not turning pages.
+    max_offset: int = 100_000
+
+    # Host names the service answers to, checked by TrustedHostMiddleware. A
+    # comma-separated string rather than a list: every other field here is a
+    # scalar, and pydantic-settings would read a list from the environment as
+    # JSON, which turns a missing bracket into a service that will not start.
+    # Read it through allowed_hosts_list, never by splitting at the call site.
+    allowed_hosts: str = "localhost,127.0.0.1,*.onrender.com"
+
     # Metadata shown in /docs and openapi.json. The title and version mirror
     # the [project] section of pyproject.toml - a test guards that the version
     # numbers stay in step, because the two are written down separately. The
@@ -36,6 +49,15 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        """The allowed_hosts string as the list the middleware expects.
+
+        Blank entries are dropped, so a trailing comma or a stray space in the
+        environment does not turn into a host pattern matching nothing.
+        """
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
 
 
 @lru_cache

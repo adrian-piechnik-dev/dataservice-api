@@ -171,6 +171,64 @@ async def test_title_contains_ignores_letter_case(
     assert total == 2
 
 
+async def test_title_contains_treats_underscore_as_literal(
+    session: AsyncSession,
+    sample_stories: None,
+) -> None:
+    """An underscore searches for an underscore, not for any single character.
+
+    The sample carries "rust-analyzer ..." with a hyphen. Left unescaped, the
+    underscore in the query would match that hyphen and the filter would return
+    a story the caller never asked for.
+    """
+    stories, total = await list_stories(
+        session,
+        limit=100,
+        offset=0,
+        title_contains="rust_analyzer",
+    )
+
+    assert stories == []
+    assert total == 0
+
+
+async def test_title_contains_treats_percent_as_literal(
+    session: AsyncSession,
+    sample_stories: None,
+) -> None:
+    """A per-cent sign searches for a per-cent sign, not for everything.
+
+    The story is created here rather than in SAMPLE: the fixture's five entries
+    are the fixed count other tests assert against.
+    """
+    await create_story(
+        session,
+        StoryCreate(
+            hn_id=38106789,
+            title="Bun 1.2 starts 50% faster",
+            url="https://bun.sh/blog/bun-v1.2",
+            site="bun.sh",
+            author="jarred",
+            points=412,
+            num_comments=155,
+            rank=6,
+            posted_at=datetime(2026, 8, 28, 9, 30, tzinfo=timezone.utc),
+            scraped_at=SCRAPED_AT,
+        ),
+    )
+    await session.commit()
+
+    stories, total = await list_stories(
+        session,
+        limit=100,
+        offset=0,
+        title_contains="%",
+    )
+
+    assert [story.hn_id for story in stories] == [38106789]
+    assert total == 1
+
+
 async def test_is_hiring_filter_selects_and_excludes_job_posts(
     session: AsyncSession,
     sample_stories: None,

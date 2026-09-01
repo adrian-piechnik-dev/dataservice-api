@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from ap_dataservice.config import get_settings
 from ap_dataservice.routes import router
@@ -41,6 +42,15 @@ def create_app() -> FastAPI:
         description=settings.app_description,
         version=settings.app_version,
         lifespan=lifespan,
+    )
+    # The Host header is echoed back by url_for (the Location header of a 201),
+    # so an unchecked one lets a caller point that address at a host of their
+    # choosing. The middleware answers 400 before any handler runs. The list
+    # comes from the settings, because the deployment - not the code - knows
+    # which names the service is reachable under.
+    application.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts_list,
     )
     application.include_router(router)
     return application
