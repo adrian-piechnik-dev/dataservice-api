@@ -97,6 +97,75 @@ def test_missing_required_field_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings(_env_file=None)
 
 
+def test_default_page_size_above_maximum_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bounds that contradict each other stop the start, not the first request.
+
+    A default page larger than the maximum leaves a service in which every
+    listing sent without a limit answers 422 - the values are each of the right
+    type, so only a check across them catches it.
+    """
+    _clear_settings_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+    monkeypatch.setenv("API_KEY", "secret-123")
+    monkeypatch.setenv("DEFAULT_PAGE_SIZE", "500")
+    monkeypatch.setenv("MAX_PAGE_SIZE", "200")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_default_page_size_equal_to_maximum_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bound is inclusive: a default page exactly as large as the maximum.
+
+    Both values name the same page size, so every listing is served at the
+    ceiling and none of them is refused - a working configuration, not a
+    contradictory one. Tightening the check to ">=" would refuse it and no
+    other test would notice.
+    """
+    _clear_settings_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+    monkeypatch.setenv("API_KEY", "secret-123")
+    monkeypatch.setenv("DEFAULT_PAGE_SIZE", "200")
+    monkeypatch.setenv("MAX_PAGE_SIZE", "200")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.default_page_size == settings.max_page_size == 200
+
+
+def test_non_positive_default_page_size_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A page size of zero serves an empty page to every caller, forever.
+
+    The check covers each bound separately, so this one is asserted apart from
+    max_offset: narrowing the positivity check to the offset alone would leave
+    the page sizes unguarded and the suite would still pass.
+    """
+    _clear_settings_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+    monkeypatch.setenv("API_KEY", "secret-123")
+    monkeypatch.setenv("DEFAULT_PAGE_SIZE", "0")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_non_positive_max_offset_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bound of zero serves nothing at all, so it is a configuration error."""
+    _clear_settings_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+    monkeypatch.setenv("API_KEY", "secret-123")
+    monkeypatch.setenv("MAX_OFFSET", "0")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
 def test_applies_defaults_for_metadata_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     """Metadata has defaults, so .env need not supply any of it."""
     _clear_settings_env(monkeypatch)

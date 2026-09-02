@@ -10,6 +10,8 @@ and closes the session, so the endpoints draw the transaction boundary: every
 change ends with a commit, and a failed write with a rollback.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
 from fastapi import (
@@ -28,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ap_dataservice.config import Settings, get_settings
 from ap_dataservice.db import get_session
-from ap_dataservice.models import Story
+from ap_dataservice.models import SITE_MAX_LENGTH, TITLE_MAX_LENGTH, Story
 from ap_dataservice.repository import (
     create_story,
     delete_story,
@@ -54,11 +56,6 @@ router = APIRouter(
 # plainly a bad request. The bounds turn it into the 422 it always was.
 INT32_MIN = -2_147_483_648
 INT32_MAX = 2_147_483_647
-
-# Text filters are compared against these columns, so a longer value can never
-# match anything - it is rejected instead of scanned for.
-SITE_MAX_LENGTH = 255
-TITLE_MAX_LENGTH = 512
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -87,6 +84,52 @@ STORY_NOT_FOUND_DETAIL = "Story not found"
 DUPLICATE_HN_ID_DETAIL = "Story with this hn_id already exists"
 
 
+async def get_story_or_404(story_id: StoryIdPath, session: SessionDep) -> Story:
+    """Loads the story the path names, or ends the request with a 404.
+
+    Every endpoint addressing a single story needs the same two steps, so they
+    live here once: a handler receives the story itself and is left with what
+    is actually its own - returning it, updating it, deleting it.
+    """
+    story = await get_story(session, story_id)
+    if story is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=STORY_NOT_FOUND_DETAIL,
+        )
+    return story
+
+
+StoryDep = Annotated[Story, Depends(get_story_or_404)]
+
+
+@asynccontextmanager
+async def commit_or_409(session: AsyncSession) -> AsyncIterator[None]:
+    """Commits the writes made in the block, turning a conflict into a 409.
+
+    hn_id is unique in the database, so a repeated scrape of an entry still
+    sitting on the front page ends with an IntegrityError on write. That is a
+    client error (the resource already exists), not a server failure.
+
+    The repository flushes, so the violation surfaces there rather than at
+    commit time - which is why the repository call belongs inside the block.
+
+    After a failed write the session stays in an aborted transaction - without
+    the rollback every later use of it would end in an error. from None: the
+    original exception carries the SQL statement, which has no business showing
+    up in the log beside the response.
+    """
+    try:
+        yield
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=DUPLICATE_HN_ID_DETAIL,
+        ) from None
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=StoryRead)
 async def create_story_endpoint(
     data: StoryCreate,
@@ -96,27 +139,14 @@ async def create_story_endpoint(
 ) -> Story:
     """Creates a story and returns it with the new address in Location.
 
-    hn_id is unique in the database, so a repeated scrape of an entry still
-    sitting on the front page ends with an IntegrityError on write. We catch
-    it here and turn it into a 409: this is a client error (the resource
-    already exists), not a server failure.
+    A payload repeating an hn_id already stored ends with a 409 - the rule
+    lives in commit_or_409, which also draws the transaction boundary here.
 
     The Location address is built with url_for by route name, so changing the
     router prefix leaves no stale path behind in the code.
     """
-    try:
+    async with commit_or_409(session):
         story = await create_story(session, data)
-        await session.commit()
-    except IntegrityError:
-        # After a failed write the session stays in an aborted transaction -
-        # without the rollback every later use of it would end in an error.
-        await session.rollback()
-        # from None: the original exception carries the SQL statement, which
-        # has no business showing up in the log beside the response.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=DUPLICATE_HN_ID_DETAIL,
-        ) from None
 
     response.headers["Location"] = str(
         request.url_for("get_story_endpoint", story_id=story.id)
@@ -150,6 +180,10 @@ async def list_stories_endpoint(
     the settings on every request. offset is bounded the same way and for the
     same reason: OFFSET makes the database produce and discard every row before
     it, so paging arbitrarily deep is work nobody asked for.
+
+    The text filters are bounded by the column widths from models.py: a value
+    longer than the column can never match a row, so it is refused instead of
+    being scanned for.
     """
     page_limit = settings.default_page_size if limit is None else limit
     if page_limit > settings.max_page_size:
@@ -185,20 +219,14 @@ async def list_stories_endpoint(
 
 
 @router.get("/{story_id}", response_model=StoryRead)
-async def get_story_endpoint(story_id: StoryIdPath, session: SessionDep) -> Story:
+async def get_story_endpoint(story: StoryDep) -> Story:
     """Returns a single story, or a 404 when the database holds none."""
-    story = await get_story(session, story_id)
-    if story is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=STORY_NOT_FOUND_DETAIL,
-        )
     return story
 
 
 @router.patch("/{story_id}", response_model=StoryRead)
 async def update_story_endpoint(
-    story_id: StoryIdPath,
+    story: StoryDep,
     data: StoryUpdate,
     session: SessionDep,
 ) -> Story:
@@ -208,22 +236,8 @@ async def update_story_endpoint(
     repository filters them away. Changing hn_id to one already taken ends
     with a 409, just as on creation: it is the same uniqueness conflict.
     """
-    story = await get_story(session, story_id)
-    if story is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=STORY_NOT_FOUND_DETAIL,
-        )
-
-    try:
+    async with commit_or_409(session):
         updated = await update_story(session, story, data)
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=DUPLICATE_HN_ID_DETAIL,
-        ) from None
 
     # updated_at is filled in by the database (onupdate), so after the write
     # SQLAlchemy treats the attribute as stale and would reach for it only
@@ -238,18 +252,11 @@ async def update_story_endpoint(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-async def delete_story_endpoint(story_id: StoryIdPath, session: SessionDep) -> None:
+async def delete_story_endpoint(story: StoryDep, session: SessionDep) -> None:
     """Deletes the story and answers with no content, or raises a 404.
 
     response_class=Response: a 204 response carries no body, so there is also
     nothing to declare through a content-type header.
     """
-    story = await get_story(session, story_id)
-    if story is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=STORY_NOT_FOUND_DETAIL,
-        )
-
     await delete_story(session, story)
     await session.commit()

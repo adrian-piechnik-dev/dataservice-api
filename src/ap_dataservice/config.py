@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,7 +10,9 @@ class Settings(BaseSettings):
     """Application settings.
 
     Values are read from environment variables, and locally from a .env file.
-    A missing required value or a wrong type stops the application from starting.
+    A missing required value or a wrong type stops the application from starting,
+    and so does a set of pagination bounds that contradict each other - a type
+    alone does not tell a working configuration from an unusable one.
     """
 
     database_url: str
@@ -49,6 +52,28 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def _check_pagination_bounds(self) -> "Settings":
+        """Rejects pagination bounds that describe a service nobody can use.
+
+        Each bound has to be positive, and the default page size has to fit
+        under the maximum. Otherwise the values pass validation and the service
+        starts, only to answer every unparameterised listing with a 422 - a
+        deployment mistake that surfaces as a runtime one, far from its cause.
+        """
+        for name in ("default_page_size", "max_page_size", "max_offset"):
+            value: int = getattr(self, name)
+            if value <= 0:
+                raise ValueError(f"{name} must be greater than 0 (got {value})")
+
+        if self.default_page_size > self.max_page_size:
+            raise ValueError(
+                f"default_page_size ({self.default_page_size}) must not exceed "
+                f"max_page_size ({self.max_page_size})"
+            )
+
+        return self
 
     @property
     def allowed_hosts_list(self) -> list[str]:

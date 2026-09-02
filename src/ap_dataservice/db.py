@@ -21,8 +21,13 @@ def get_engine() -> AsyncEngine:
     a connection pool, so a misconfigured environment fails at startup with a
     readable error instead of an ImportError. @lru_cache keeps one engine per
     process, so the connection pool is created exactly once.
+
+    pool_pre_ping=True: a pooled connection is checked out with a cheap probe
+    first. Managed Postgres and connection poolers drop idle connections, and
+    without the probe the first request after a quiet spell would hand the
+    handler a dead connection and answer 500.
     """
-    return create_async_engine(get_settings().database_url)
+    return create_async_engine(get_settings().database_url, pool_pre_ping=True)
 
 
 @lru_cache

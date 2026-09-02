@@ -5,6 +5,18 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+# Column widths, kept here as the single source of truth. The same numbers bound
+# three separate things - the column, the input schema and the length of a text
+# filter - and only the first one of those is checked by the database. Written
+# down three times they drift apart quietly: a column widened here would leave a
+# schema that still rejects the values the column now accepts.
+TITLE_MAX_LENGTH = 512
+URL_MAX_LENGTH = 2048
+SITE_MAX_LENGTH = 255
+AUTHOR_MAX_LENGTH = 255
+TOPIC_MAX_LENGTH = 255
+COMPANY_MAX_LENGTH = 255
+
 
 class Base(DeclarativeBase):
     """Shared declarative base for the models (SQLAlchemy 2.0 style)."""
@@ -22,14 +34,18 @@ class Story(Base):
     # same entry stays on the front page across runs).
     hn_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
 
-    title: Mapped[str] = mapped_column(String(512), index=True)
-    url: Mapped[str] = mapped_column(String(2048))
+    title: Mapped[str] = mapped_column(String(TITLE_MAX_LENGTH), index=True)
+    url: Mapped[str] = mapped_column(String(URL_MAX_LENGTH))
 
     # Host the entry points at. Empty for a self-post (Ask HN, Show HN without
     # a link), where the story is the discussion itself.
-    site: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    site: Mapped[str | None] = mapped_column(
+        String(SITE_MAX_LENGTH),
+        nullable=True,
+        index=True,
+    )
 
-    author: Mapped[str] = mapped_column(String(255))
+    author: Mapped[str] = mapped_column(String(AUTHOR_MAX_LENGTH))
 
     points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     num_comments: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -40,8 +56,10 @@ class Story(Base):
 
     is_hiring: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    topic: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    company: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    topic: Mapped[str | None] = mapped_column(String(TOPIC_MAX_LENGTH), nullable=True)
+    company: Mapped[str | None] = mapped_column(
+        String(COMPANY_MAX_LENGTH), nullable=True
+    )
 
     # Both stamps come from the scraper, not from this database: posted_at is
     # when Hacker News published the entry, scraped_at when P1 read it.

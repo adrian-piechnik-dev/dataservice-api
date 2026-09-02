@@ -142,7 +142,7 @@ that authority belongs to Alembic alone.
 pytest -q
 ```
 
-64 tests cover the settings, schemas, repository, HTTP routes, authentication
+83 tests cover the settings, schemas, repository, HTTP routes, authentication
 and the OpenAPI document. They run against an in-memory SQLite database created
 per test, so no setup and no cleanup is needed.
 
@@ -212,7 +212,7 @@ scripts/            # Operational entry points, outside the packaged code
 └── seed_from_csv.py
 examples/           # Input data for the seed
 └── hn_demo.csv
-tests/              # 64 tests, one module per layer
+tests/              # 83 tests, one module per layer
 migrations/         # Alembic environment
 └── versions/       # Schema revisions (baseline: 706bc60acdf5)
 ```

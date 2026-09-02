@@ -324,6 +324,32 @@ async def test_overlong_filter_values_return_422(client: AsyncClient) -> None:
     assert long_title.status_code == 422
 
 
+async def test_post_with_overlong_title_returns_422(client: AsyncClient) -> None:
+    """A title wider than its column is refused, not sent to the database.
+
+    Unbounded, the value passes validation and fails while the INSERT is being
+    bound - a 500 for what the input schema could have caught. The listing
+    afterwards shows nothing was written on the way.
+    """
+    response = await client.post(
+        "/stories",
+        json={
+            "hn_id": 38101234,
+            "title": "a" * (TITLE_MAX_LENGTH + 1),
+            "url": "https://github.com/example/pgbackup",
+            "author": "pg_hacker",
+            "rank": 1,
+            "posted_at": POSTED_AT,
+            "scraped_at": SCRAPED_AT,
+        },
+    )
+
+    assert response.status_code == 422
+
+    listing = await client.get("/stories")
+    assert listing.json()["total"] == 0
+
+
 async def test_title_contains_metacharacters_match_literally(
     client: AsyncClient,
 ) -> None:

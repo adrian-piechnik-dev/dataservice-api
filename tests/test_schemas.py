@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
+from ap_dataservice.models import TITLE_MAX_LENGTH
 from ap_dataservice.schemas import StoryCreate, StoryRead, StoryUpdate
 
 POSTED_AT = datetime(2026, 8, 29, 6, 12, tzinfo=timezone.utc)
@@ -17,6 +18,24 @@ def test_create_rejects_empty_title() -> None:
         StoryCreate(
             hn_id=38101234,
             title="",
+            url="https://github.com/example/pgbackup",
+            author="pg_hacker",
+            rank=1,
+            posted_at=POSTED_AT,
+            scraped_at=SCRAPED_AT,
+        )
+
+
+def test_create_rejects_overlong_title() -> None:
+    """The upper bound is the column width, so the limit is in the contract.
+
+    Without it the payload validates and only the INSERT refuses it, which the
+    client sees as a server failure rather than as a bad request.
+    """
+    with pytest.raises(ValidationError):
+        StoryCreate(
+            hn_id=38101234,
+            title="a" * (TITLE_MAX_LENGTH + 1),
             url="https://github.com/example/pgbackup",
             author="pg_hacker",
             rank=1,
