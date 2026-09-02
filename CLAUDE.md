@@ -69,7 +69,7 @@ or in `.env` — settings are validated before either command does anything.
   `get_settings` (see `test_routes.py`, `test_security.py`), not by patching
   modules. `test_main.py` is the exception: `create_app` reads settings at call
   time, so it uses `monkeypatch` on `ap_dataservice.main.get_settings`.
-- 83 tests currently pass. A change that alters the count should say so.
+- 88 tests currently pass. A change that alters the count should say so.
 
 ## Boundaries
 

@@ -24,6 +24,7 @@ Hacker News front page by [smartscraper-ai](https://github.com/adrian-piechnik-d
 - **Filtering** by `site`, `title_contains`, `points_min`, `points_max` and `is_hiring`
 - **Stable ordering** by `scraped_at`, `posted_at`, `points`, `num_comments`, `rank`, `title`, `site` or `id`, with `descending` and NULLs last on every dialect
 - **API-key authentication** through the `X-API-Key` header, applied to the whole resource router
+- **Read-only mode** through `ENABLE_WRITE_ENDPOINTS`: the public demo serves the reads alone, so a published key cannot rewrite what visitors see; a local clone sets it to `true` for the full CRUD
 - **Alembic migrations** wired to the application settings, with the schema baseline included
 - **CSV seeding** from the scraper's output, idempotent on re-runs
 - **Docker** image: multi-stage, non-root, runtime dependencies only
@@ -95,6 +96,8 @@ skipping the row.
    `DATABASE_URL` and `API_KEY` are required — the application refuses to start
    without them. The example ships with a local SQLite database and the
    placeholder `API_KEY=change-me`; replace it before exposing the service.
+   Writing endpoints are off unless `ENABLE_WRITE_ENDPOINTS=true` — set it in
+   your local `.env` to work with the full CRUD.
 
 5. Create the database schema:
 
@@ -142,7 +145,7 @@ that authority belongs to Alembic alone.
 pytest -q
 ```
 
-83 tests cover the settings, schemas, repository, HTTP routes, authentication
+88 tests cover the settings, schemas, repository, HTTP routes, authentication
 and the OpenAPI document. They run against an in-memory SQLite database created
 per test, so no setup and no cleanup is needed.
 
@@ -212,7 +215,7 @@ scripts/            # Operational entry points, outside the packaged code
 └── seed_from_csv.py
 examples/           # Input data for the seed
 └── hn_demo.csv
-tests/              # 83 tests, one module per layer
+tests/              # 88 tests, one module per layer
 migrations/         # Alembic environment
 └── versions/       # Schema revisions (baseline: 706bc60acdf5)
 ```

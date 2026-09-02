@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     # filtering or sorting, not turning pages.
     max_offset: int = 100_000
 
+    # Whether the writing half of the resource is served at all. The public
+    # instance publishes its API key, so anybody could POST a story into the
+    # data a visitor is looking at - and an edited title, unlike a deleted row,
+    # leaves nothing behind to notice. False by default: a deployment that
+    # wants writes has to say so, rather than a deployment that forgets to
+    # think about it ending up open.
+    enable_write_endpoints: bool = False
+
     # Host names the service answers to, checked by TrustedHostMiddleware. A
     # comma-separated string rather than a list: every other field here is a
     # scalar, and pydantic-settings would read a list from the environment as

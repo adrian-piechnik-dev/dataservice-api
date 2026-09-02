@@ -8,6 +8,9 @@ one place, and leaves the data layer independent of the protocol.
 The repository deliberately does not commit, and get_session only hands out
 and closes the session, so the endpoints draw the transaction boundary: every
 change ends with a commit, and a failed write with a rollback.
+
+The endpoints sit on two routers, one reading and one writing, because a
+deployment may serve only the first of them - see include_story_routes.
 """
 
 from collections.abc import AsyncIterator
@@ -17,6 +20,7 @@ from typing import Annotated, Literal
 from fastapi import (
     APIRouter,
     Depends,
+    FastAPI,
     HTTPException,
     Path,
     Query,
@@ -44,7 +48,17 @@ from ap_dataservice.security import require_api_key
 # Security instead of Depends: the guard behaves the same way, but the key
 # scheme reaches OpenAPI, so /docs gains an Authorize button. Declaring it on
 # the router covers every path of the resource - no endpoint repeats it.
-router = APIRouter(
+#
+# Two routers rather than one, because the writing half is optional: a router
+# is the unit an application can be assembled without. Both carry the same
+# prefix, tag and guard, so a client cannot tell from a single request which
+# of them served it.
+read_router = APIRouter(
+    prefix="/stories",
+    tags=["stories"],
+    dependencies=[Security(require_api_key)],
+)
+write_router = APIRouter(
     prefix="/stories",
     tags=["stories"],
     dependencies=[Security(require_api_key)],
@@ -130,7 +144,7 @@ async def commit_or_409(session: AsyncSession) -> AsyncIterator[None]:
         ) from None
 
 
-@router.post("", status_code=status.HTTP_201_CREATED, response_model=StoryRead)
+@write_router.post("", status_code=status.HTTP_201_CREATED, response_model=StoryRead)
 async def create_story_endpoint(
     data: StoryCreate,
     session: SessionDep,
@@ -154,7 +168,7 @@ async def create_story_endpoint(
     return story
 
 
-@router.get("", response_model=Page[StoryRead])
+@read_router.get("", response_model=Page[StoryRead])
 async def list_stories_endpoint(
     session: SessionDep,
     settings: SettingsDep,
@@ -218,13 +232,13 @@ async def list_stories_endpoint(
     )
 
 
-@router.get("/{story_id}", response_model=StoryRead)
+@read_router.get("/{story_id}", response_model=StoryRead)
 async def get_story_endpoint(story: StoryDep) -> Story:
     """Returns a single story, or a 404 when the database holds none."""
     return story
 
 
-@router.patch("/{story_id}", response_model=StoryRead)
+@write_router.patch("/{story_id}", response_model=StoryRead)
 async def update_story_endpoint(
     story: StoryDep,
     data: StoryUpdate,
@@ -247,7 +261,7 @@ async def update_story_endpoint(
     return updated
 
 
-@router.delete(
+@write_router.delete(
     "/{story_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
@@ -260,3 +274,25 @@ async def delete_story_endpoint(story: StoryDep, session: SessionDep) -> None:
     """
     await delete_story(session, story)
     await session.commit()
+
+
+def include_story_routes(
+    application: FastAPI,
+    *,
+    enable_write_endpoints: bool,
+) -> None:
+    """Registers the resource: the reads always, the writes only when asked.
+
+    Where the writes are off they are not registered at all, rather than
+    registered and refused inside the handler. A handler saying no would still
+    stand in openapi.json, so /docs would advertise an operation that cannot
+    be performed, and the Authorize button would invite the reader to try it.
+
+    What the client sees instead is what any read-only resource looks like:
+    the path exists for GET, so a POST to it comes back as 405 with an Allow
+    header naming the methods that are served. Nothing in the answer says that
+    a writing endpoint exists elsewhere and was switched off here.
+    """
+    application.include_router(read_router)
+    if enable_write_endpoints:
+        application.include_router(write_router)

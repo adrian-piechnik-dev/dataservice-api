@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from ap_dataservice.config import get_settings
-from ap_dataservice.routes import router
+from ap_dataservice.routes import include_story_routes
 
 
 @asynccontextmanager
@@ -35,6 +35,8 @@ def create_app() -> FastAPI:
 
     Metadata comes from the settings, so the title and version shown in /docs
     and openapi.json change through the environment, without touching code.
+    Which endpoints the resource offers comes from there too: a deployment
+    serving a published API key runs without the writing half.
     """
     settings = get_settings()
     application = FastAPI(
@@ -52,7 +54,10 @@ def create_app() -> FastAPI:
         TrustedHostMiddleware,
         allowed_hosts=settings.allowed_hosts_list,
     )
-    application.include_router(router)
+    include_story_routes(
+        application,
+        enable_write_endpoints=settings.enable_write_endpoints,
+    )
     return application
 
 

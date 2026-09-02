@@ -14,6 +14,7 @@ def _clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "DEFAULT_PAGE_SIZE",
         "MAX_PAGE_SIZE",
         "MAX_OFFSET",
+        "ENABLE_WRITE_ENDPOINTS",
         "ALLOWED_HOSTS",
         "APP_TITLE",
         "APP_DESCRIPTION",
@@ -164,6 +165,24 @@ def test_non_positive_max_offset_raises(monkeypatch: pytest.MonkeyPatch) -> None
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_write_endpoints_are_disabled_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An environment that says nothing about writes gets a read-only service.
+
+    The flag guards a deployment whose API key is published, so the default
+    has to be the safe one: a service is opened for writing by a decision, not
+    by an omission.
+    """
+    _clear_settings_env(monkeypatch)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+    monkeypatch.setenv("API_KEY", "secret-123")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.enable_write_endpoints is False
 
 
 def test_applies_defaults_for_metadata_fields(monkeypatch: pytest.MonkeyPatch) -> None:

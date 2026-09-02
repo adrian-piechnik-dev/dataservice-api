@@ -9,6 +9,7 @@ replace here: /openapi.json needs neither an API key nor a database session.
 The metadata create_app reads on call is swapped in with monkeypatch.
 """
 
+import re
 from collections.abc import AsyncGenerator
 from importlib.metadata import version
 from typing import Any
@@ -23,6 +24,19 @@ from ap_dataservice.security import API_KEY_HEADER_NAME
 
 # The scheme name under which FastAPI documents the guard from security.py.
 API_KEY_SCHEME_NAME = "APIKeyHeader"
+
+# Stands in for a path parameter when a route is called by its declared path.
+PATH_PARAMETER = re.compile(r"\{[^}]+\}")
+
+
+def _settings_with_writes() -> Settings:
+    """Settings of a deployment that serves the writing half of the resource."""
+    return Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        api_key="sekret-testowy-123",
+        enable_write_endpoints=True,
+        _env_file=None,
+    )
 
 
 @pytest.fixture
@@ -115,6 +129,49 @@ def test_every_stories_operation_requires_a_key(
     assert operations, "the schema documents no operation on /stories"
     for path, method, operation in operations:
         assert operation.get("security"), f"{method.upper()} {path} is not secured"
+
+
+async def test_every_stories_route_rejects_a_request_without_a_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every route the application actually serves answers 401 without a key.
+
+    The application is built with the writes on, because create_app leaves them
+    off by default and the guard on the writing router would otherwise be
+    covered by nothing at all.
+
+    The cases come from the operations the application generates out of its own
+    routing table, not from a list written here: an endpoint added later is
+    picked up by this test on its own, which is the only way it cannot quietly
+    fall out of the guard. The methods are asserted first, so an application
+    that stopped serving the writes fails here instead of passing on the reads
+    alone.
+    """
+    monkeypatch.setattr("ap_dataservice.main.get_settings", _settings_with_writes)
+    application = create_app()
+
+    cases = [
+        (method.upper(), PATH_PARAMETER.sub("1", path))
+        for path, operations in application.openapi()["paths"].items()
+        if path.startswith("/stories")
+        for method in sorted(operations)
+    ]
+
+    assert {method for method, _ in cases} >= {"GET", "POST", "PATCH", "DELETE"}
+
+    transport = ASGITransport(app=application)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://localhost",
+    ) as anonymous_client:
+        for method, path in cases:
+            response = await anonymous_client.request(
+                method,
+                path,
+                json={} if method in {"POST", "PATCH", "PUT"} else None,
+            )
+
+            assert response.status_code == 401, f"{method} {path}"
 
 
 async def test_request_from_untrusted_host_is_rejected(app: FastAPI) -> None:

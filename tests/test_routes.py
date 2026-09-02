@@ -8,6 +8,11 @@ The dependencies are replaced through dependency_overrides: get_session hands
 back a session bound to the in-memory test database (the fixture from
 conftest.py), and get_settings returns settings with small page limits, so the
 pagination tests have something to check.
+
+Two applications are mounted, both through include_story_routes - the same
+function create_app uses, so the wiring under test is the deployed one. The
+app fixture serves the whole resource; read_only_app serves the reads alone,
+the way the public instance runs.
 """
 
 from collections.abc import AsyncGenerator
@@ -20,15 +25,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ap_dataservice.config import Settings, get_settings
 from ap_dataservice.db import get_session
-from ap_dataservice.repository import DEFAULT_ORDER_BY, SORTABLE_COLUMNS
+from ap_dataservice.repository import DEFAULT_ORDER_BY, SORTABLE_COLUMNS, create_story
 from ap_dataservice.routes import (
     INT32_MAX,
     INT32_MIN,
     SITE_MAX_LENGTH,
     TITLE_MAX_LENGTH,
     OrderBy,
-    router,
+    include_story_routes,
 )
+from ap_dataservice.schemas import StoryCreate
 from ap_dataservice.security import API_KEY_HEADER_NAME
 
 VALID_API_KEY = "sekret-testowy-123"
@@ -58,11 +64,10 @@ def _test_settings() -> Settings:
     )
 
 
-@pytest.fixture
-def app(session: AsyncSession) -> FastAPI:
-    """An application with just the stories router, wired to the test database."""
+def _application(session: AsyncSession, *, enable_write_endpoints: bool) -> FastAPI:
+    """An application with just the stories resource, on the test database."""
     application = FastAPI()
-    application.include_router(router)
+    include_story_routes(application, enable_write_endpoints=enable_write_endpoints)
     # The session is handed back directly, without a generator: closing it is
     # the fixture's job, which keeps the test and the endpoints in one
     # transaction.
@@ -72,9 +77,33 @@ def app(session: AsyncSession) -> FastAPI:
 
 
 @pytest.fixture
+def app(session: AsyncSession) -> FastAPI:
+    """The whole resource: the reads and the writes, as a local clone runs it."""
+    return _application(session, enable_write_endpoints=True)
+
+
+@pytest.fixture
+def read_only_app(session: AsyncSession) -> FastAPI:
+    """The resource as the public instance serves it: reads only."""
+    return _application(session, enable_write_endpoints=False)
+
+
+@pytest.fixture
 async def client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
     """A client carrying a valid API key on every request."""
     transport = ASGITransport(app=app)
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        headers={API_KEY_HEADER_NAME: VALID_API_KEY},
+    ) as authorized_client:
+        yield authorized_client
+
+
+@pytest.fixture
+async def read_only_client(read_only_app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+    """A client with a valid key, talking to the application without writes."""
+    transport = ASGITransport(app=read_only_app)
     async with AsyncClient(
         transport=transport,
         base_url="http://testserver",
@@ -502,6 +531,100 @@ async def test_request_without_key_returns_401(anonymous_client: AsyncClient) ->
     response = await anonymous_client.get("/stories")
 
     assert response.status_code == 401
+
+
+async def test_write_endpoints_are_not_served_when_disabled(
+    read_only_client: AsyncClient,
+) -> None:
+    """With the writes off, the methods that change data are not served at all.
+
+    The paths still exist for reading, so the answer is the one any read-only
+    resource gives: 405, with Allow naming the methods that are served. The key
+    is valid here - being able to authenticate does not get a caller a write.
+    """
+    post = await read_only_client.post(
+        "/stories",
+        json={
+            "hn_id": 38101234,
+            "title": "Show HN: A self-hosted Postgres backup tool",
+            "url": "https://github.com/example/pgbackup",
+            "author": "pg_hacker",
+            "rank": 1,
+            "posted_at": POSTED_AT,
+            "scraped_at": SCRAPED_AT,
+        },
+    )
+    patch = await read_only_client.patch("/stories/1", json={"points": 256})
+    delete = await read_only_client.delete("/stories/1")
+
+    for response in (post, patch, delete):
+        assert response.status_code == 405
+        assert "POST" not in response.headers.get("allow", "")
+        assert "GET" in response.headers["allow"]
+
+
+async def test_reads_still_work_when_writes_are_disabled(
+    read_only_client: AsyncClient,
+    session: AsyncSession,
+) -> None:
+    """Turning the writes off leaves the resource readable, which is the point.
+
+    The story is seeded straight through the repository, because the endpoint
+    that would create it is exactly what this application does not serve.
+    """
+    story = await create_story(
+        session,
+        StoryCreate(
+            hn_id=38101234,
+            title="Show HN: A self-hosted Postgres backup tool",
+            url="https://github.com/example/pgbackup",
+            site="github.com",
+            author="pg_hacker",
+            rank=1,
+            posted_at=POSTED_AT,
+            scraped_at=SCRAPED_AT,
+        ),
+    )
+    await session.commit()
+
+    listing = await read_only_client.get("/stories")
+    single = await read_only_client.get(f"/stories/{story.id}")
+
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert single.status_code == 200
+    assert single.json()["hn_id"] == 38101234
+
+
+def test_openapi_documents_only_the_reads_when_writes_are_disabled(
+    app: FastAPI,
+    read_only_app: FastAPI,
+) -> None:
+    """/docs shows what is served, so a disabled write is documented nowhere.
+
+    Refusing the write inside a handler instead would leave the operation in
+    the schema, and the documentation page would offer the reader a button for
+    something that cannot succeed.
+    """
+    served = {
+        path: sorted(methods)
+        for path, methods in app.openapi()["paths"].items()
+        if path.startswith("/stories")
+    }
+    read_only = {
+        path: sorted(methods)
+        for path, methods in read_only_app.openapi()["paths"].items()
+        if path.startswith("/stories")
+    }
+
+    assert served == {
+        "/stories": ["get", "post"],
+        "/stories/{story_id}": ["delete", "get", "patch"],
+    }
+    assert read_only == {
+        "/stories": ["get"],
+        "/stories/{story_id}": ["get"],
+    }
 
 
 def test_order_by_matches_sortable_columns() -> None:
