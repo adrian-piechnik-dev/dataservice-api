@@ -8,10 +8,28 @@ An async REST API serving Hacker News front-page stories, built on FastAPI, SQLA
 
 <https://dataservice-api.onrender.com/docs>
 
-Hosted on Render's free tier, so the instance sleeps when idle — the first
-request after a pause takes up to ~60 seconds while it wakes up. The `/docs`
-page itself is public, but every `/stories` call needs a valid `X-API-Key`
-header, and that key is not published here.
+The `X-API-Key` that every `/stories` call needs is published on purpose:
+
+```
+demo-public-984e97d4ec89da65
+```
+
+On `/docs`, press **Authorize**, paste that key, and the endpoints on the page
+answer. From a terminal:
+
+```bash
+curl -H "X-API-Key: demo-public-984e97d4ec89da65" \
+  "https://dataservice-api.onrender.com/stories?limit=3"
+```
+
+Publishing a key means anybody could write with it, so the instance serves
+reads only: `ENABLE_WRITE_ENDPOINTS` is off there, and `/docs` documents the
+two `GET` operations alone. The writing half is not missing, only left
+unregistered — it is `write_router` in `src/ap_dataservice/routes.py`, and the
+88 tests cover it with the flag on.
+
+Hosted on Render's free tier, so the instance sleeps when idle: the first
+request after a pause can take several tens of seconds while it wakes up.
 
 This is an instance of the [tpl-fastapi](https://github.com/adrian-piechnik-dev/tpl-fastapi)
 template, retargeted onto a real domain: the data it serves is scraped from the
@@ -19,12 +37,12 @@ Hacker News front page by [smartscraper-ai](https://github.com/adrian-piechnik-d
 
 ## Features
 
-- **Async CRUD** over a single `Story` resource: `POST`, `GET` (list and by id), `PATCH`, `DELETE`
+- **Async CRUD** over a single `Story` resource: `POST`, `GET` (list and by id), `PATCH`, `DELETE` — the three writing methods served only where they are switched on
 - **Pagination** with `limit` / `offset` and a `total` count of every match, not just the page
 - **Filtering** by `site`, `title_contains`, `points_min`, `points_max` and `is_hiring`
 - **Stable ordering** by `scraped_at`, `posted_at`, `points`, `num_comments`, `rank`, `title`, `site` or `id`, with `descending` and NULLs last on every dialect
-- **API-key authentication** through the `X-API-Key` header, applied to the whole resource router
-- **Read-only mode** through `ENABLE_WRITE_ENDPOINTS`: the public demo serves the reads alone, so a published key cannot rewrite what visitors see; a local clone sets it to `true` for the full CRUD
+- **API-key authentication** through the `X-API-Key` header, declared on the resource routers rather than repeated per endpoint
+- **Read-only mode** through `ENABLE_WRITE_ENDPOINTS`: off by default, and where it is off the writing endpoints are not registered at all — absent from `/docs` rather than refused at runtime
 - **Alembic migrations** wired to the application settings, with the schema baseline included
 - **CSV seeding** from the scraper's output, idempotent on re-runs
 - **Docker** image: multi-stage, non-root, runtime dependencies only
@@ -163,8 +181,12 @@ Run the service:
 docker run --rm -p 8000:8000 \
   -e DATABASE_URL="postgresql+asyncpg://user:pass@host:5432/dbname" \
   -e API_KEY="your-key" \
+  -e ENABLE_WRITE_ENDPOINTS="true" \
   dataservice-api
 ```
+
+Drop the `ENABLE_WRITE_ENDPOINTS` line to run the image the way the demo
+runs: reads only.
 
 **Migrations do not run on container start.** The container assumes the schema
 is already there — with several replicas a parallel `alembic upgrade head`
